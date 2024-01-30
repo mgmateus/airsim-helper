@@ -3,14 +3,14 @@ import rospy
 
 import numpy as np
 
-from airsim_base.types import Pose
-from airsim_base.utils import to_quaternion
+from airsim_base.types import Pose, Vector3r, Quaternionr
+from airsim_base.utils import to_quaternion, to_eularian_angles
 
-from cv_bridge import CvBridge, CvBridgeError
+#from cv_bridge import CvBridge, CvBridgeError
 
 
-def angular_distance(position : tuple, target_position : tuple, degrees : bool) -> float:
-    """Calculate the angular distance between origin and target position
+def angular2D_difference(orientation : Quaternionr, position : Vector3r, target_position : Vector3r) -> float:
+    """Calculate the angular difference between origin and target position
 
     Args:
         position (tuple): (x, y, z) current position.
@@ -20,20 +20,32 @@ def angular_distance(position : tuple, target_position : tuple, degrees : bool) 
     Returns:
         float: distance
     """    
+    _, _, yaw = to_eularian_angles(orientation)
     x, y, _= position
     tx, ty, _= target_position
 
     to= np.arctan2(ty - y, tx - x)
 
-    heading= to - 0
+    heading= to - yaw
     if heading > math.pi:
         heading -= 2 * math.pi
 
     elif heading < -math.pi:
         heading += 2 * math.pi
 
-    return heading if not degrees else np.degrees(heading)
+    return heading 
 
+def angular3D_difference(vehicle_position : Vector3r, target_position : Vector3r) -> float:
+    _, _, zv = vehicle_position
+    xo, yo, zo = target_position
+    
+    u = Vector3r(xo, yo, zv)
+    v = Vector3r(xo, yo, zo)
+    
+    pitch = np.arccos(u.dot(v)/(u.get_length() * v.get_length()))
+    
+    return pitch
+    
 def pose(position : tuple, eularian_orientation : tuple) -> Pose:
             """_summary_
 
@@ -57,12 +69,12 @@ def pose(position : tuple, eularian_orientation : tuple) -> Pose:
             
             return pose_
 
-def image_transport(img_msg):
-        rospy.logwarn(img_msg.header)
-        try:
-            return CvBridge().imgmsg_to_cv2(img_msg, "passthrough")
+# def image_transport(img_msg):
+#         rospy.logwarn(img_msg.header)
+#         try:
+#             return CvBridge().imgmsg_to_cv2(img_msg, "passthrough")
 
-        except CvBridgeError as e:
-            rospy.logerr("CvBridge Error: {0}".format(e))
+#         except CvBridgeError as e:
+#             rospy.logerr("CvBridge Error: {0}".format(e))
             
 

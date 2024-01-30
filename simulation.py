@@ -3,12 +3,19 @@
 import os
 import pprint
 import json
+import time
+import itertools
 
 import numpy as np
 
-from airsim_base.client import MultirotorClient
-from airsim_base.types import Vector3r, Quaternionr, Pose, KinematicsState
-from airsim_base.utils import to_quaternion
+from typing import List, Tuple
+from threading import Thread
+
+from airsim_base.client import MultirotorClient, VehicleClient
+from airsim_base.types import Vector3r, DrivetrainType, YawMode, Pose
+from airsim_base.utils import to_quaternion, to_eularian_angles
+
+from utils import angular3D_difference, angular2D_difference
 
 class _Ue4Briedge:
     """Starts communication's Engine.
@@ -36,136 +43,196 @@ class _Debbug:
     restart_conn = "Restart Connection : "
 
     def __init__(self, client) -> None:
-        self._client = client
+        self.__client = client
 
     def log_restart_connection(self):
-        full_info = f"{self.restart_conn} {self._client.ping()}"
+        full_info = f"{self.restart_conn} {self.__client.ping()}"
         print(full_info)
 
+class Gimbal:
+    def __init__(self, cams : List[str]):
+        """Gimbal
 
+        Args:
+            cams (List[str]): camera names in settings.json
+        """        
+        self.__cams = cams
+        
+    @property
+    def cams(self):
+        return self.__cams
+    
+    def discretize_rotation(self, camera : Pose, pitch : float, roll : float, yaw : float) -> Tuple:
+        """A discretization for angle difference
+
+        Args:
+            camera (Pose): Current camera pose
+            pitch (float): pitch in randians
+            roll (float): roll in radians
+            yaw (float): yaw in radians
+
+        Returns:
+            Tuple: discrezed positions for each DoF
+        """        
+        pitch_, roll_, yaw_ = to_eularian_angles(camera.orientation)
+                
+        d_pitch = np.arange(pitch_, pitch, 0.01) 
+        d_roll = np.arange(roll_, roll, 0.01) 
+        d_yaw = np.arange(yaw_, yaw, 0.01) 
+        
+        max_ = max(len(d_pitch), len(d_roll), len(d_yaw))        
+        
+        d_pitch = np.zeros(max_) if d_pitch is None else d_pitch
+        d_roll = np.zeros(max_) if d_roll is None else d_roll
+        d_yaw = np.zeros(max_) if d_yaw is None else d_yaw
+        
+        return d_pitch, d_roll, d_yaw
+    
+    def rotation(self, client : MultirotorClient, vehicle_position : Vector3r, camera_orientation : Vector3r):
+        """Apply rotations for each camera
+
+        Args:
+            client (VehicleClient): vehicle type connection
+            vehicle_name (str): vehicle name in settings.json
+            pitch (float): pitch in randians
+            roll (float): roll in radians
+            yaw (float): yaw in radians
+        """
+        pitch, roll, yaw = camera_orientation        
+        xv, yv, zv = vehicle_position
+
+        camera_pose = client.simGetCameraInfo(self.__cams[0]).pose
+        d_pitch, d_roll, d_yaw = self.discretize_rotation(camera_pose, pitch, roll, yaw)
+
+        adjustments = list(itertools.zip_longest(d_pitch, d_roll, d_yaw, fillvalue= 0))
+        for adjust in adjustments:
+            p, r, y = adjust
+            pose = Pose(Vector3r(xv, yv, -zv), to_quaternion(p, r, y))
+            time.sleep(0.01)
+            for cam in self.__cams:
+                client.simSetCameraPose(cam, pose)
+                
+        
+        
+            
+        
 
 class ClientController(_Ue4Briedge, _Debbug):
     def __init__(self) -> None:
         _Ue4Briedge.__init__(self)
         _Debbug.__init__(self, self.client)
-        self.vehicle_name = list(json.loads(self.client.getSettingsString())['Vehicles'].keys())[0]
+        self.client.enableApiControl(True)
+        self.client.armDisarm(True)
+        self.__vehicle_name = list(json.loads(self.client.getSettingsString())['Vehicles'].keys())[0]
+        
+        cams = list(json.loads(self.client.getSettingsString())['Vehicles'][self.__vehicle_name]['Cameras'].keys())
+        self.__cams = cams
+        self.__gimbal = Gimbal(cams)
+        
+        self.__target = None
+        
+    @property
+    def vehicle_name(self):
+        return self.__vehicle_name
+    
+    @vehicle_name.setter
+    def vehicle_name(self, name):
+        self.__vehicle_name = name
+        
+    @property
+    def target(self):
+        return self.__target
+    
+    @target.setter
+    def target(self, name):
+        self.__target = name
         
 
-    def moveTo(self, x : float, y : float, z : float, pitch : float, yaw : float) -> bool:
-        position = Vector3r(x, y, z)
-        orientation = to_quaternion(pitch, 0, yaw)
-
-        rtk = self.client.getMultirotorState().kinematics_estimated
-
-        nrtk = KinematicsState()
-        nrtk.position = position
-        nrtk.orientation = orientation
-        nrtk.linear_velocity = rtk.linear_velocity
-        nrtk.angular_velocity = rtk.angular_velocity
-        nrtk.linear_acceleration = rtk.linear_acceleration
-        nrtk.angular_acceleration = rtk.angular_acceleration
-
-        self.client.simSetKinematics(nrtk, ignore_collision=False, vehicle_name=self.vehicle_name)
-
-    def calcular_diferenca_angulos(self, vetor1, vetor2):
-        # Normalizar os vetores
-        u = vetor1 / np.linalg.norm(vetor1)
-        v = vetor2 / np.linalg.norm(vetor2)
-
-        # Calcular o cosseno do ângulo de yaw
-        cos_yaw = np.dot(u[:2], v[:2])
-
-        # Calcular o ângulo de yaw
-        yaw = np.arccos(cos_yaw)
-
-        # Modificar os vetores para excluir a componente de yaw
-        u_prime = np.array([u[0], u[1], 0])
-        v_prime = np.array([v[0], v[1], 0])
-
-        # Calcular o cosseno dos ângulos de roll e pitch
-        #cos_roll = np.dot(u_prime, v_prime) / (np.linalg.norm(u_prime) * np.linalg.norm(v_prime))
-        cos_pitch = np.dot(u, v)
-
-        # Calcular os ângulos de roll e pitch
-        #roll = np.arccos(cos_roll)
-        pitch = np.arccos(cos_pitch)
-
-        # Converter de radianos para graus
-        yaw_graus = np.degrees(yaw)
-        #roll_graus = np.degrees(roll)
-        pitch_graus = np.degrees(pitch)
-
-        return pitch_graus, yaw_graus
-
-    # def _oriented_target_vision_to_vehicle(self, target : str, radius : float, dist : float, theta : float):
-    #     """Define a random vehicle pose at target based on radius range and secure distance to avoid collision.
-
-    #     Args:
-    #         vehicle_name (str) : Vehicle's settings name.
-    #         target (str) : Name of target's object.
-    #         radius (float): Range around the target to define vehicle's pose.
-    #         dist (float): Secure distance to spawn.
-    #         theta (float): Angle (0, 2pi) to direction of radius.
-
-    #     Returns:
-    #         tuple: New vehicle pose (x, y) and orientation (phi). 
-    #     """ 
-       
-    #     _, _, current_phi = self.get_current_eularian_vehicle_angles(vehicle_name)
-    #     pose_object = self._get_object_pose(target)
-
-    #     ox = pose_object.position.x_val
-    #     oy = pose_object.position.y_val
-
-    #     cos_theta = np.cos(theta)
-    #     sin_theta = np.sin(theta)
-
-    #     px = ox + (dist*sin_theta + radius*sin_theta)
-    #     py = oy + (dist*cos_theta + radius*cos_theta)
-    #     phi = current_phi + angular_distance((px, py, 0), (ox, oy, 0), degrees=True)
-    #     return (px, py, phi)
-
-
-    # def set_oriented_target_vision_to_vehicle(self, vehicle_name : str, target : str, radius : float, dist : float, theta : float) -> None:
-    #     """Define a random vehicle pose at target based on radius range and secure distance to avoid collision.
-
-    #     Args:
-    #         vehicle_name (str) : Vehicle's settings name.
-    #         target (str) : Name of target's object.
-    #         radius (float): Range around the target to define vehicle's pose.
-    #         dist (float): Secure distance to spawn.
-    #         theta (float): Angle (0, 2pi) to direction of radius.
-
-    #     Returns:
-    #         tuple: New vehicle pose (x, y) and orientation (phi). 
-    #     """ 
-
-    #     pose = self.get_vehicle_pose(vehicle_name)
-    #     z = pose.position.z_val
-
-    #     x, y, phi = self._oriented_target_vision_to_vehicle(vehicle_name, target, radius, dist, theta)
-    #     position = (x, y, z)
-    #     eularian_orientation = (0, 0, phi)
-    #     self._set_vehicle_pose(vehicle_name, position, eularian_orientation)
-
+    def action_move(self, x : float, y : float, z : float, pitch : float, yaw : float) -> bool:
+        target = Vector3r(x, y, z)
+        orientation = Vector3r(pitch, 0, yaw)
+        gimbal = Thread(target= self.__gimbal.rotation, args=(self.client, self.__vehicle_name, target, orientation, ))
+        gimbal.start()
+        
+        self.client.moveToPositionAsync(x, y, z, 2, drivetrain=DrivetrainType.MaxDegreeOfFreedom, yaw_mode=YawMode(False, yaw))
+        
+    def look_to_target(self, next_position : Vector3r, target_name : str):
+        rtk_v = self.client.getMultirotorState().kinematics_estimated
+        rtk_t = self.client.simGetObjectPose(target_name)
+        
+        pitch = angular3D_difference(rtk_v.position, rtk_t.position)
+        yaw = angular2D_difference(rtk_v.orientation, rtk_v.position, rtk_t.position)
+        p, _, y = to_eularian_angles(rtk_v.orientation) 
+        yaw += y
+        pitch += p
+        distance = ( (rtk_v.position.x_val-next_position.x_val)**2 + (rtk_v.position.y_val-next_position.y_val)**2 +\
+            (rtk_v.position.z_val - (-next_position.z_val)**2 ))**0.5
+        
+        while distance >= 0.45:
+            print(distance)
+            rtk_v = self.client.getMultirotorState().kinematics_estimated
+            pitch = angular3D_difference(rtk_v.position, rtk_t.position)
+            yaw = angular2D_difference(rtk_v.orientation, rtk_v.position, rtk_t.position)
+            
+            yaw = 1.5*yaw
+            camera_pose = Pose()
+            camera_pose.position = rtk_v.position
+            camera_pose.position.z_val = -camera_pose.position.z_val
+            camera_pose.orientation = to_quaternion(pitch, 0, yaw)
+            
+            print(pitch, yaw)
+            self.client.simSetCameraPose(self.__cams[0], camera_pose)
+            self.client.simSetCameraPose(self.__cams[2], camera_pose)
+            
+            distance = ( (rtk_v.position.x_val-next_position.x_val)**2 + (rtk_v.position.y_val-next_position.y_val)**2 +\
+            (rtk_v.position.z_val- (-next_position.z_val))**2 )**0.5
+            
+            
+    def move_look_to_target(self, next_position : Vector3r, target_name : str):
+        x, y, z = next_position
+        gimbal = Thread(target=self.look_to_target, args=(next_position, target_name, ))
+        gimbal.start()
+        self.client.moveToPositionAsync(x, y, z, 2, drivetrain=DrivetrainType.MaxDegreeOfFreedom, )
+        
+                
 
 
 if __name__ == "__main__":
     c = ClientController()
-    position = Vector3r(10, 10, 10)
-    orientation = to_quaternion(10, 0, 10)
-
-    pv = c.client.simGetVehiclePose('Hydrone')
-    xv, yv, zv = pv.position
-
-    po = c.client.simGetObjectPose('teste')
-    xo, yo, zo = po.position
     
-    r = np.sqrt((xv - xo)**2 + (yv - yo)**2 + (zv - zo)**2)
-    pitch = 90 - np.rad2deg(np.arcsin(zo/r))
-    yaw = 90 - np.rad2deg(np.arccos(yo/(r * np.cos(pitch))))
+    pose = Vector3r(30, 80, -30)
+    c.move_look_to_target(pose, 'centroide')
+    
+    # print(c.vehicle_name)
+    # c.client.takeoffAsync().join()
 
-    pv.orientation = to_quaternion(pitch, 180, yaw)
+    # pv = c.client.simGetVehiclePose('Hydrone')
+    # xv, yv, zv = pv.position
 
-    c.client.simSetCameraPose("Stereo_Cam", pv, "Hydrone")
+    # po = c.client.simGetObjectPose('centroide')
+    # xo, yo, zo = po.position
+    
+    
+    # pitch = angular3D_difference(pv.position, po.position)
+    # yaw = angular2D_difference(pv.position, po.position)
+    # p, _, y = to_eularian_angles(pv.orientation) 
+    # yaw += y
+    # pitch += p
+    # c.action_move(10, 10, -10, pitch, yaw)
+    
+    
+    # pv = c.client.simGetVehiclePose('Hydrone')
+    # xv, yv, zv = pv.position
+
+    # po = c.client.simGetObjectPose('centroide')
+    # xo, yo, zo = po.position
+    
+    
+    # pitch = angular3D_difference(pv.position, po.position)
+    # yaw = angular2D_difference(pv.position, po.position)
+    # p, _, y = to_eularian_angles(pv.orientation) 
+    # yaw += y
+    # pitch += p
+    # c.action_move(-30, -90, -30, pitch, yaw)
+    
     
