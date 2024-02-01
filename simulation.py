@@ -159,7 +159,7 @@ class ClientController(_Ue4Briedge, _Debbug):
     def look_to_target(self, next_position : Vector3r, target_name : str):
         rtk_v = self.client.getMultirotorState().kinematics_estimated
         rtk_t = self.client.simGetObjectPose(target_name)
-        
+
         pitch = angular3D_difference(rtk_v.position, rtk_t.position)
         yaw = angular2D_difference(rtk_v.orientation, rtk_v.position, rtk_t.position)
         p, _, y = to_eularian_angles(rtk_v.orientation) 
@@ -167,9 +167,8 @@ class ClientController(_Ue4Briedge, _Debbug):
         pitch += p
         distance = ( (rtk_v.position.x_val-next_position.x_val)**2 + (rtk_v.position.y_val-next_position.y_val)**2 +\
             (rtk_v.position.z_val - (-next_position.z_val)**2 ))**0.5
-        
+                
         while distance >= 0.45:
-            print(distance)
             rtk_v = self.client.getMultirotorState().kinematics_estimated
             pitch = angular3D_difference(rtk_v.position, rtk_t.position)
             yaw = angular2D_difference(rtk_v.orientation, rtk_v.position, rtk_t.position)
@@ -180,9 +179,8 @@ class ClientController(_Ue4Briedge, _Debbug):
             camera_pose.position.z_val = -camera_pose.position.z_val
             camera_pose.orientation = to_quaternion(pitch, 0, yaw)
             
-            print(pitch, yaw)
-            self.client.simSetCameraPose(self.__cams[0], camera_pose)
-            self.client.simSetCameraPose(self.__cams[2], camera_pose)
+            for camera in self.__cams:
+                self.client.simSetCameraPose(camera, camera_pose)
             
             distance = ( (rtk_v.position.x_val-next_position.x_val)**2 + (rtk_v.position.y_val-next_position.y_val)**2 +\
             (rtk_v.position.z_val- (-next_position.z_val))**2 )**0.5
@@ -192,17 +190,27 @@ class ClientController(_Ue4Briedge, _Debbug):
         x, y, z = next_position
         gimbal = Thread(target=self.look_to_target, args=(next_position, target_name, ))
         gimbal.start()
-        self.client.moveToPositionAsync(x, y, z, 2, drivetrain=DrivetrainType.MaxDegreeOfFreedom, )
+        self.client.moveToPositionAsync(x, y, z, 2, drivetrain=DrivetrainType.MaxDegreeOfFreedom)
         
                 
 
 
 if __name__ == "__main__":
     c = ClientController()
+    c.client.takeoffAsync().join()
+
+    pose = Vector3r(30, 10, -30)
+    c.move_look_to_target(pose, 'eolic')
     
-    pose = Vector3r(30, 80, -30)
-    c.move_look_to_target(pose, 'centroide')
+    # pose = Vector3r(30, 10, -30)
+    # t = Thread(target=c.move_look_to_target, args=(pose, 'centroide', ))
+    # t.start()
+    # t.join()
     
+    # pose = Vector3r(30, 80, -30)
+    # t = Thread(target=c.move_look_to_target, args=(pose, 'centroide', ))
+    # t.start()
+    # t.join()
     # print(c.vehicle_name)
     # c.client.takeoffAsync().join()
 
