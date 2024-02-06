@@ -8,12 +8,25 @@ from airsim_base.utils import to_quaternion, to_eularian_angles
 
 #from cv_bridge import CvBridge, CvBridgeError
 
-def set_client(client : str, ip = str) -> VehicleClient or MultirotorClient:
-     if client == "computer_vision":
-          return VehicleClient(ip)
-     
-     else: 
-        return MultirotorClient(ip)
+def non_zero(nparray : np.array, scalar : float):
+    return nparray + (np.ones(len(nparray)) * scalar) if nparray.any() else np.ones(len(nparray)) * scalar
+
+def sum_vector(u : Vector3r, v : Vector3r):
+    u_ = u.to_numpy_array()
+    v_ = v.to_numpy_array()
+    uv = u_ + v_
+    print(uv)
+    x, y, z = uv
+    return Vector3r(x,y,z)
+
+def vector_from_nparray(u : np.array):
+    x,y,z = u
+    return Vector3r(x,y,z)
+
+def dot_scalar_vector(u : Vector3r, scalar : float):
+    u_ = u.to_numpy_array() * scalar
+    x, y, z = u_
+    return Vector3r(x, y, z)
 
 def angular_diference(current : float, to : float) -> float:
     heading= to - current
