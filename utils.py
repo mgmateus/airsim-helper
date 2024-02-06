@@ -121,12 +121,6 @@ def pose(position : tuple, eularian_orientation : tuple) -> Pose:
             
             return pose_
 
-# def image_transport(img_msg):
-#         rospy.logwarn(img_msg.header)
-#         try:
-#             return CvBridge().imgmsg_to_cv2(img_msg, "passthrough")
 
-#         except CvBridgeError as e:
-#             rospy.logerr("CvBridge Error: {0}".format(e))
             
 
