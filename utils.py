@@ -2,11 +2,51 @@ import math
 
 import numpy as np
 
+from airsim_base.client import VehicleClient, MultirotorClient
 from airsim_base.types import Pose, Vector3r, Quaternionr
 from airsim_base.utils import to_quaternion, to_eularian_angles
 
 #from cv_bridge import CvBridge, CvBridgeError
 
+def set_client(client : str, ip = str) -> VehicleClient or MultirotorClient:
+     if client == "computer_vision":
+          return VehicleClient(ip)
+     
+     else: 
+        return MultirotorClient(ip)
+
+def angular_diference(current : float, to : float) -> float:
+    heading= to - current
+    if heading > math.pi:
+        heading -= 2 * math.pi
+
+    elif heading < -math.pi:
+        heading += 2 * math.pi
+
+    return heading 
+
+def eularian_diference(vehicle_pose : Pose, target_position : Vector3r):
+    vx, vy, vz = vehicle_pose.position
+    vpitch, vroll, vyaw = to_eularian_angles(vehicle_pose.orientation)
+
+    tx, ty, tz = target_position
+    
+    u = Vector3r(tx, ty, vz)
+    v = Vector3r(tx, ty, tz)
+    
+    pitch = np.arccos(u.dot(v)/(u.get_length() * v.get_length()))
+    pitch = angular_diference(vpitch, pitch)
+
+    roll = np.arctan2(ty - vy, tz - vz)
+    roll = angular_diference(vroll, roll)
+    
+    yaw = np.arctan2(ty - vy, tx - vx)
+    yaw = angular_diference(vyaw, yaw)
+
+    return pitch, roll, yaw
+
+     
+      
 
 def angular2D_difference(orientation : Quaternionr, position : Vector3r, target_position : Vector3r) -> float:
     """Calculate the angular difference between origin and target position
