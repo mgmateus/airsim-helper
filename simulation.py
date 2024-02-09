@@ -9,12 +9,13 @@ from threading import Thread
 from airsim_base.client import MultirotorClient, VehicleClient
 from airsim_base.types import Vector3r, KinematicsState
 
-from utils import sum_vector, dot_scalar_vector
+from .utils import sum_vector, dot_scalar_vector
 
 from std_msgs.msg import String
+from sensor_msgs.msg import Image
 from cv_bridge import CvBridge, CvBridgeError
 
-from airsim_ros_pkgs.msg import Image, VelCmd
+from airsim_ros_pkgs.msg import VelCmd, GimbalAngleEulerCmd
 from airsim_ros_pkgs.srv import Takeoff, Land
 
 numpy_array = NewType('numpy_array', np.array)
@@ -88,7 +89,6 @@ class QuarotorROS:
     
     @staticmethod
     def image_transport(img_msg):
-        rospy.logwarn(img_msg.header)
         try:
             return CvBridge().imgmsg_to_cv2(img_msg, "passthrough")
 
@@ -101,8 +101,10 @@ class QuarotorROS:
         rospy.Subscriber("/airsim_node/"+vehicle_name+"/Stereo_Cam/DepthPerspective", \
                          Image, self._callback_depth)
         
-        self.__vel_pub = rospy.Publisher("/airsim_node/"+vehicle_name+"/vel_cmd_world_frame", \
+        self.__velocity_pub = rospy.Publisher("/airsim_node/"+vehicle_name+"/vel_cmd_world_frame", \
                                         VelCmd, queue_size=1)
+        self.__gimbal_pub = rospy.Publisher("/airsim_node/gimbal_angle_euler_cmd", \
+                                        GimbalAngleEulerCmd, queue_size=1)
         self.__pub_info = rospy.Publisher("uav_info", \
                                           String, queue_size=10)
         
@@ -133,7 +135,7 @@ class QuarotorROS:
         return data, "depth"
     
     ## Services
-    def takeOff(self):
+    def take_off(self):
         try:
             service = rospy.ServiceProxy("/airsim_node/"+self.__vehicle_name+"/takeoff", Takeoff)
             rospy.wait_for_service("/airsim_node/"+self.__vehicle_name+"/takeoff")
@@ -154,7 +156,7 @@ class QuarotorROS:
             print ('Service call failed: %s' % e)
             
     ##Functions
-    def set_velocity(self, linear_x : float, linear_y : float, linear_z : float, \
+    def _velocity(self, linear_x : float, linear_y : float, linear_z : float, \
                     angular_x : float, angular_y : float, angular_z : float):
         
         vel = VelCmd()
@@ -165,7 +167,18 @@ class QuarotorROS:
         vel.twist.angular.y = angular_y
         vel.twist.angular.z = angular_z
         
-        self.__vel_pub.publish(vel)
+        self.__velocity_pub.publish(vel)
+        
+    def _gimbal(self, pitch : float, yaw : float):
+        gimbal = GimbalAngleEulerCmd()
+        gimbal.camera_name = "Stereo_Cam"
+        gimbal.vehicle_name = "Hydrone"
+        gimbal.roll = 0.0
+        gimbal.pitch = pitch
+        gimbal.yaw = yaw
+        
+        self.__gimbal_pub.publish(gimbal)
+        
         
     def get_state(self, action : numpy_array) -> Tuple[numpy_array, bool]:
         linear_x, linear_y, linear_z, angular_x, angular_y, angular_z = action
@@ -175,7 +188,18 @@ class QuarotorROS:
         angular_x = np.clip(angular_x, -.25, .25)
         angular_y = np.clip(angular_y, -.25, .25)
         angular_z = np.clip(angular_z, -.25, .25)
-        self.set_velocity(linear_x, linear_y, linear_z, angular_x, angular_y, angular_z)
+        
+        self._velocity(linear_x, linear_y, linear_z, angular_x, angular_y, angular_z)
+        
+    def get_state2(self, action : numpy_array) -> Tuple[numpy_array, bool]:
+        pitch, yaw = action
+        
+        pitch = np.clip(pitch, -np.pi, np.pi)
+        yaw = np.clip(yaw, -np.pi, np.pi)
+        
+        rospy.logwarn("ooooooooooooooooooooooooooooooooooooooooooooooooooooooiiiiiiiiiiiiiiiiiiiiiiiii")
+        
+        self._gimbal(pitch, yaw)
 
         
         
