@@ -104,7 +104,11 @@ class Vector3r(MsgpackMixin):
         return (math.isnan(self.x_val) or math.isnan(self.y_val) or math.isnan(self.z_val))
 
     def __add__(self, other):
-        return Vector3r(self.x_val + other.x_val, self.y_val + other.y_val, self.z_val + other.z_val)
+        if type(self) == type(other):
+            return Vector3r( self.x_val+other.x_val, self.y_val+other.y_val, self.z_val+other.z_val)
+        else:
+            raise TypeError('unsupported operand type(s) for +: %s and %s' % ( str(type(self)), str(type(other))) )
+
 
     def __sub__(self, other):
         return Vector3r(self.x_val - other.x_val, self.y_val - other.y_val, self.z_val - other.z_val)

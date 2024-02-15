@@ -2,9 +2,8 @@ import math
 
 import numpy as np
 
-from airsim_base.client import VehicleClient, MultirotorClient
-from airsim_base.types import Pose, Vector3r, Quaternionr
-from airsim_base.utils import to_quaternion, to_eularian_angles
+from .airsim_base.types import Pose, Vector3r, Quaternionr
+from .airsim_base.utils import to_quaternion, to_eularian_angles
 
 #from cv_bridge import CvBridge, CvBridgeError
 

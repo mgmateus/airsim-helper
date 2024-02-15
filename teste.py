@@ -82,22 +82,38 @@ def mean_point(position : Vector3r, next_position : Vector3r):
     return triangle
 
 
-points = np.array([[0,0,0], [0,0,10]])
-path = evaluate_bezier(points, 200)
+# points = np.array([[0,0,0], [0,0,10]])
+# path = evaluate_bezier(points, 200)
 
-p = Vector3r(0, 0, 10)
-t = Vector3r(30, 10, 30)
-points = mean_point(p, t)
-path = np.vstack((path, evaluate_bezier(points, 200)))
+# p = Vector3r(0, 0, 10)
+# t = Vector3r(30, 10, 30)
+# points = mean_point(p, t)
+# path = np.vstack((path, evaluate_bezier(points, 200)))
 
-p = Vector3r(30, 10, 30)
-t = Vector3r(30, 80, 30)
-points = mean_point(p, t)
-path = np.vstack((path, evaluate_bezier(points, 200)))
+# p = Vector3r(30, 10, 30)
+# t = Vector3r(30, 80, 30)
+# points = mean_point(p, t)
+# path = np.vstack((path, evaluate_bezier(points, 200)))
 
-p = Vector3r(30, 80, 30)
-t = Vector3r(20, 90, 40)
-points = mean_point(p, t)
-path = np.vstack((path, evaluate_bezier(points, 200)))
+# p = Vector3r(30, 80, 30)
+# t = Vector3r(20, 90, 40)
+# points = mean_point(p, t)
+# path = np.vstack((path, evaluate_bezier(points, 200)))
 
-plot_bezier_curve(points, path)
+# plot_bezier_curve(points, path)
+
+
+def trace(f):
+    def wrap(*args, **kwargs):
+        print(f"[TRACE] func: {f.__name__}, args: {args}, kwargs: {kwargs}")
+        return f(*args, **kwargs) +1
+
+    return wrap
+
+@trace
+def teste(a, b):
+    return a + b
+
+print(teste(1, 5))
+
+
