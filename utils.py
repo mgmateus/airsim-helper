@@ -1,31 +1,17 @@
 import math
+import cv2
 
 import numpy as np
+from numpy.typing import NDArray
 
-from .airsim_base.types import Pose, Vector3r, Quaternionr
-from .airsim_base.utils import to_quaternion, to_eularian_angles
+from typing import List, Tuple
+from PIL import Image
+
+from .airsim_base.types import Pose, Vector3r, ImageType, ImageResponse
+from .airsim_base.utils import to_eularian_angles, string_to_uint8_array
+
 
 #from cv_bridge import CvBridge, CvBridgeError
-
-def non_zero(nparray : np.array, scalar : float):
-    return nparray + (np.ones(len(nparray)) * scalar) if nparray.any() else np.ones(len(nparray)) * scalar
-
-def sum_vector(u : Vector3r, v : Vector3r):
-    u_ = u.to_numpy_array()
-    v_ = v.to_numpy_array()
-    uv = u_ + v_
-    print(uv)
-    x, y, z = uv
-    return Vector3r(x,y,z)
-
-def vector_from_nparray(u : np.array):
-    x,y,z = u
-    return Vector3r(x,y,z)
-
-def dot_scalar_vector(u : Vector3r, scalar : float):
-    u_ = u.to_numpy_array() * scalar
-    x, y, z = u_
-    return Vector3r(x, y, z)
 
 def angular_diference(current : float, to : float) -> float:
     heading= to - current
@@ -37,7 +23,7 @@ def angular_diference(current : float, to : float) -> float:
 
     return heading 
 
-def eularian_diference(vehicle_pose : Pose, target_position : Vector3r):
+def eularian_diference(vehicle_pose : Pose, target_position : Vector3r) -> Tuple[float, float, float]:
     vx, vy, vz = vehicle_pose.position
     vpitch, vroll, vyaw = to_eularian_angles(vehicle_pose.orientation)
 
@@ -57,69 +43,30 @@ def eularian_diference(vehicle_pose : Pose, target_position : Vector3r):
 
     return pitch, roll, yaw
 
+def cv_image(raw_image) -> List:
+    return cv2.imdecode(string_to_uint8_array(raw_image), cv2.IMREAD_UNCHANGED)
+
+def color_from_response(response : ImageResponse) -> NDArray:
+    img1d = np.fromstring(response.image_data_uint8, dtype=np.uint8)
+    img_rgb = img1d.reshape(response.height, response.width, 3)
+    img_rgb = img_rgb[..., :3][..., ::-1]
+    return img_rgb
+
+def depth_from_response(response : ImageResponse) -> NDArray:
+    img_depth = np.array(response.image_data_float, dtype=np.float64)
+    img_depth = img_depth.reshape(response.height, response.width)
+    return img_depth
+
+def transform_response(responses):
+    images = []
+    for raw in responses:
+        if raw.image_type == ImageType.Scene or raw.image_type == ImageType.Segmentation:
+            images.append(color_from_response(raw))
+        else:
+            images.append(depth_from_response(raw))
+    return images
+
+    
      
       
-
-def angular2D_difference(orientation : Quaternionr, position : Vector3r, target_position : Vector3r) -> float:
-    """Calculate the angular difference between origin and target position
-
-    Args:
-        position (tuple): (x, y, z) current position.
-        target_position (tuple): (x, y, z) target's position.
-        degrees: Define if radian's or degree's at result type 
-
-    Returns:
-        float: distance
-    """    
-    _, _, yaw = to_eularian_angles(orientation)
-    x, y, _= position
-    tx, ty, _= target_position
-
-    to= np.arctan2(ty - y, tx - x)
-
-    heading= to - yaw
-    if heading > math.pi:
-        heading -= 2 * math.pi
-
-    elif heading < -math.pi:
-        heading += 2 * math.pi
-
-    return heading 
-
-def angular3D_difference(vehicle_position : Vector3r, target_position : Vector3r) -> float:
-    _, _, zv = vehicle_position
-    xo, yo, zo = target_position
-    
-    u = Vector3r(xo, yo, zv)
-    v = Vector3r(xo, yo, zo)
-    
-    pitch = np.arccos(u.dot(v)/(u.get_length() * v.get_length()))
-    
-    return pitch
-    
-def pose(position : tuple, eularian_orientation : tuple) -> Pose:
-            """_summary_
-
-            Args:
-                position (tuple): position (x, y ,z).
-                eularian_orientation (tuple): (roll, pitch, yaw).
-
-            Returns:
-                Pose: AirSim pose type.
-            """        
-            x, y, z = position
-            pitch, roll, yaw =  np.deg2rad(eularian_orientation[0]),\
-                                np.deg2rad(eularian_orientation[1]),\
-                                np.deg2rad(eularian_orientation[2])
-            pose_ = Pose()
-            pose_.position.x_val = x
-            pose_.position.y_val = y
-            pose_.position.z_val = z
-            
-            pose_.orientation = to_quaternion(pitch, roll, yaw)
-            
-            return pose_
-
-
-            
 

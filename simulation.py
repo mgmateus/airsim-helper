@@ -6,16 +6,18 @@ import pprint
 
 import numpy as np
 
-from typing import List, Tuple, NewType
 from threading import Thread
+import concurrent.futures
+
+
+from typing import List, Tuple, NewType
+from numpy.typing import NDArray
+
 
 from .airsim_base.client import MultirotorClient, VehicleClient
-from .airsim_base.types import Vector3r, KinematicsState, Pose
-from .airsim_base.utils import to_quaternion
+from .airsim_base.types import Vector3r, KinematicsState, ImageType, ImageRequest, ImageResponse
 
-from .utils import sum_vector, dot_scalar_vector
-
-numpy_array = NewType('numpy_array', np.array)
+from .utils import transform_response, cv_image
 
 def set_client(ip : str, client : str):
      if client == "computer_vision":
@@ -163,7 +165,7 @@ class ComputerVision(_Ue4Briedge):
         print(f"Position : {pose.position.to_numpy_array()} - Target Land : {self.__home.position.to_numpy_array()} - Altitude : {h}")
         self._up(h, vel) if domain == "underwater" else self._down(h, vel)
 
-    def get_state(self, action : numpy_array) -> Tuple[numpy_array, bool]:
+    def get_state(self, action : NDArray) -> Tuple[NDArray, bool]:
         linear_x, linear_y, linear_z, angular_x, angular_y, angular_z = action
         linear_x = np.clip(linear_x, -0.5, 0.5)
         linear_y = np.clip(linear_y, -0.5, 0.5)
@@ -176,10 +178,29 @@ class ComputerVision(_Ue4Briedge):
         self.__t0 = time.time()
 
         
-class QuadrotorClient(_Ue4Briedge):
-    def __init__(self, ip : str):
-        _Ue4Briedge.__init__(self, ip, client="")
-        self.__t0 = time.time()
+
+class QuadrotorClient(MultirotorClient):
+    def __init__(self, ip : str, vehicle_name : str, camera_name : str, observation : str):
+        MultirotorClient.__init__(self, ip)
+        self.confirmConnection()
+        self.enableApiControl(True)
+        self.armDisarm(True)
+
+        self.__vehicle_name = vehicle_name
+        self.__camera_name = camera_name
+        self.__observation = observation
+
+    @property
+    def vehicle_name(self):
+        return self.__vehicle_name
+    
+    @property
+    def camera_name(self):
+        return self.__camera_name
+    
+    @property
+    def observation(self):
+        return self.__observation
     
     def trajectory(self, linear_x : float, linear_y : float, linear_z : float, \
                     angular_x : float, angular_y : float, angular_z : float, dt : float = 0.001):
@@ -197,19 +218,41 @@ class QuadrotorClient(_Ue4Briedge):
         state.linear_acceleration = linear_acc
         state.angular_acceleration = angular_acc
 
-        self.set_Kinematics(state)
+        self.simSetKinematics(state)
     
-    def _moveon(self, linear_x : float, linear_y : float, linear_z : float, \
+    def moveon(self, linear_x : float, linear_y : float, linear_z : float, \
                     angular_x : float, angular_y : float, angular_z : float):
         dt = 1
-        pose = self.get_pose()
+        pose = self.simGetVehiclePose()
         position = pose.position + Vector3r(linear_x*dt, linear_y*dt ,linear_z*dt)
         pose.position = position
         pose.orientation += Vector3r(angular_x*dt, angular_y*dt, angular_z*dt).to_Quaternionr()
-        self.set_pose(pose)
-        
+        self.simSetVehiclePose(pose, False)
 
-    def get_state(self, action : numpy_array) -> Tuple[numpy_array, bool]:
+    def _observation(self) -> List:
+        t = Thread()
+        if self.observation == 'rgb':
+            # return self.simGetImages([ImageRequest(self.camera_name, ImageType.Scene)])
+            return transform_response(self.simGetImages([ImageRequest(self.camera_name, ImageType.Scene)]))
+        if self.observation == 'depth':
+            # with concurrent.futures.ThreadPoolExecutor() as executor:
+            #     response = self.simGetImages([ImageRequest(self.camera_name, ImageType.DepthPlanar, True)])
+            #     future = executor.submit(transform_response, response)
+            #     return future.result()
+            # return cv_image(self.simGetImage(self.camera_name, ImageType.DepthPlanar))
+            return transform_response(self.simGetImages([ImageRequest(self.camera_name, ImageType.DepthPlanar, True)]))
+        
+        if self.observation == 'segmentation':
+            return self.simGetImages([ImageRequest(self.camera_name, ImageType.Segmentation)])
+        if self.observation == 'stereo':
+            return self.simGetImages([ImageRequest(self.camera_name, ImageType.Scene),
+                                      ImageRequest(self.camera_name, ImageType.DepthPlanar, True)])
+        if self.observation == 'panoptic':
+            return self.simGetImages([ImageRequest(self.camera_name, ImageType.Scene),
+                                      ImageRequest(self.camera_name, ImageType.DepthPlanar, True),
+                                      ImageRequest(self.camera_name, ImageType.Segmentation)])
+
+    def get_state(self, action : NDArray) -> Tuple[NDArray, bool]:
         linear_x, linear_y, linear_z, angular_x, angular_y, angular_z = action
         linear_x = np.clip(linear_x, -0.25, 0.25)
         linear_y = np.clip(linear_y, -0.25, 0.25)
@@ -218,5 +261,7 @@ class QuadrotorClient(_Ue4Briedge):
         angular_y = np.clip(angular_y, -0.25, 0.25)
         angular_z = np.clip(angular_z, -0.25, 0.25)
         
-        self._moveon(linear_x, linear_y, linear_z, angular_x, angular_y, angular_z)
+        # self.moveon(linear_x, linear_y, linear_z, angular_x, angular_y, angular_z)
+        self.moveByVelocityBodyFrameAsync(linear_x, linear_y, linear_x, 5)
+        # self._observation()
     
