@@ -34,11 +34,9 @@ class QuarotorStereoROS(MultirotorClient):
         rospy.Subscriber("/airsim_node/"+vehicle_name+"/stereo/Scene", \
                          Image, self._callback_rgb)
         rospy.Subscriber("/airsim_node/"+vehicle_name+"/stereo/DepthPlanar", \
-                         Image, self._callback_depth_raw)
-        rospy.Subscriber("/airsim_node/"+vehicle_name+"/stereo/DepthVis", \
                          Image, self._callback_depth)
         
-        self.__velocity_pub = rospy.Publisher("/airsim_node/"+vehicle_name+"/vel_cmd_world_frame", \
+        self.__velocity_pub = rospy.Publisher("/airsim_node/"+vehicle_name+"/vel_cmd_body_frame", \
                                         VelCmd, queue_size=1)
         self.__gimbal_pub = rospy.Publisher("/airsim_node/gimbal_angle_quat_cmd", \
                                         GimbalAngleQuatCmd, queue_size=1)
@@ -55,7 +53,6 @@ class QuarotorStereoROS(MultirotorClient):
         self.__gimbal_orientation = to_quaternion(0, 0, 0)
         self.__rgb = np.array([])
         self.__depth = np.array([])
-        self.__depth_vis = np.array([])
 
     @property
     def vehicle_name(self):
@@ -84,55 +81,28 @@ class QuarotorStereoROS(MultirotorClient):
     @depth.setter
     def depth(self, data):
         self.__depth = data
-
-    @property
-    def depth_vis(self):
-        return self.__depth_vis  
-    
-    @depth_vis.setter
-    def depth_vis(self, data):
-        self.__depth_vis = data
                 
-    ## Callbacks
-    # def callback_image(func):
-    #     def callback(self, *args, **kwargs):
-    #         data, img_type = func(self, *args, **kwargs)
-    #         if data:
-    #             cv_img = image_transport(data)
-    #             resized_img = cv2.resize(cv_img.copy(), (100, 100), interpolation = cv2.INTER_AREA)
-    #             self.__setattr__(img_type, resized_img)
-    #         else:
-    #             info = f"Error in {img_type} cam!"
-    #             self.__pub_info.publish(info)
+    # Callbacks
+    def callback_image(func):
+        def callback(self, *args, **kwargs):
+            data, img_type = func(self, *args, **kwargs)
+            if data:
+                cv_img = image_transport(data)
+                resized_img = cv2.resize(cv_img.copy(), (100, 100), interpolation = cv2.INTER_AREA)
+                self.__setattr__(img_type, resized_img)
+            else:
+                info = f"Error in {img_type} cam!"
+                self.__pub_info.publish(info)
 
-    #     return callback
+        return callback
     
-    # @callback_image
-    # def _callback_rgb(self, data):
-    #     return data, "rgb"
-    
-    # @callback_image
-    # def _callback_depth(self, data):
-    #     return data, "depth"
-        
+    @callback_image
     def _callback_rgb(self, data):
-        cv_img = image_transport(data)
-        self.rgb = cv2.resize(cv_img.copy(), (100, 100), interpolation = cv2.INTER_AREA)
-
-    def _callback_depth_raw(self, data):
-        cv_img = image_transport(data)
-        self.depth = cv_img
-        # nan_location = np.isnan(cv_img)
-        # cv_img[nan_location] = np.nanmax(cv_img)
-        # norm_image =  (cv_img)*255./5.
-        # norm_image[0,0] = 255.
-        # norm_image = norm_image.astype('uint8')
-        # norm_image = cv2.resize(norm_image.copy(), (100, 100), interpolation = cv2.INTER_AREA)
-        # self.depth = norm_image
+        return data, "rgb"
     
+    @callback_image
     def _callback_depth(self, data):
-        cv_img = image_transport(data)
-        self.depth_vis = cv2.resize(cv_img.copy(), (100, 100), interpolation = cv2.INTER_AREA)
+        return data, "depth"
     
     ## Services
     def take_off(self):
@@ -183,9 +153,9 @@ class QuarotorStereoROS(MultirotorClient):
         gimbal.orientation = quaternion
 
         self.__gimbal_pub.publish(gimbal)
-
+    
     def _observation(self) -> NDArray:
-        return np.array([self.__rgb.transpose(2, 0, 1).copy(), self.__depth.transpose(2, 0, 1).copy()])
+        return [self.rgb, self.depth]
 
         
     def get_state(self, action : NDArray) -> Tuple[NDArray, bool]:

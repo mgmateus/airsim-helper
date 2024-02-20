@@ -14,10 +14,11 @@ from typing import List, Tuple, NewType
 from numpy.typing import NDArray
 
 
-from .airsim_base.client import MultirotorClient, VehicleClient
-from .airsim_base.types import Vector3r, KinematicsState, ImageType, ImageRequest, ImageResponse
+from airsim_base.client import MultirotorClient, VehicleClient
+from airsim_base.types import Vector3r, KinematicsState, ImageType, ImageRequest, ImageResponse
 
-from .utils import transform_response, cv_image
+
+from utils import transform_response, cv_image
 
 def set_client(ip : str, client : str):
      if client == "computer_vision":
