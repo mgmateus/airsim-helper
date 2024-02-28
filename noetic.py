@@ -28,31 +28,41 @@ def image_transport(img_msg):
     except CvBridgeError as e:
         rospy.logerr("CvBridge Error: {0}".format(e))
 
-class QuarotorStereoROS(MultirotorClient):            
-    def __init__(self, ip : str, vehicle_name : str, camera_name : str, observation : str):
+class QuarotorROS(MultirotorClient):            
+    def __init__(self,
+                  ip : str, 
+                  vehicle_name : str, 
+                  camera_name : str, 
+                  observation_type : str):
+        
         MultirotorClient.__init__(self, ip)
-        rospy.Subscriber("/airsim_node/"+vehicle_name+"/stereo/Scene", \
+        rospy.Subscriber("/airsim_node/"+vehicle_name+"/"+camera_name+"/Scene", \
                          Image, self._callback_rgb)
-        rospy.Subscriber("/airsim_node/"+vehicle_name+"/stereo/DepthPlanar", \
+        rospy.Subscriber("/airsim_node/"+vehicle_name+"/"+camera_name+"/DepthPlanar", \
                          Image, self._callback_depth)
         
-        self.__velocity_pub = rospy.Publisher("/airsim_node/"+vehicle_name+"/vel_cmd_body_frame", \
-                                        VelCmd, queue_size=1)
+        if observation_type == 'panoptic':
+            rospy.Subscriber("/airsim_node/"+vehicle_name+"/"+camera_name+"/Segmentation", \
+                         Image, self._callback_segmentation)
+            
+        
         self.__gimbal_pub = rospy.Publisher("/airsim_node/gimbal_angle_quat_cmd", \
                                         GimbalAngleQuatCmd, queue_size=1)
-        self.__pub_info = rospy.Publisher("uav_info", \
-                                          String, queue_size=10)        
 
         self.confirmConnection()
         self.enableApiControl(True)
         self.armDisarm(True)
 
+        
         self.__vehicle_name = vehicle_name
         self.__camera_name = camera_name
-        self.__observation = observation
-        self.__gimbal_orientation = to_quaternion(0, 0, 0)
-        self.__rgb = np.array([])
-        self.__depth = np.array([])
+        self.__observation_type = observation_type
+
+        self.gimbal_orientation = to_quaternion(0, 0, 0)
+        self.rgb = np.array([])
+        self.depth = np.array([])
+        self.segmentation = np.array([])
+
 
     @property
     def vehicle_name(self):
@@ -63,24 +73,8 @@ class QuarotorStereoROS(MultirotorClient):
         return self.__camera_name
     
     @property
-    def observation(self):
-        return self.__observation
-    
-    @property
-    def rgb(self):
-        return self.__rgb 
-
-    @rgb.setter
-    def rgb(self, data):
-        self.__rgb = data
-
-    @property
-    def depth(self):
-        return self.__depth   
-    
-    @depth.setter
-    def depth(self, data):
-        self.__depth = data
+    def observation_type(self):
+        return self.__observation_type
                 
     # Callbacks
     def callback_image(func):
@@ -104,6 +98,10 @@ class QuarotorStereoROS(MultirotorClient):
     def _callback_depth(self, data):
         return data, "depth"
     
+    @callback_image
+    def _callback_segmentation(self, data):
+        return data, "segmentation"
+    
     ## Services
     def take_off(self):
         try:
@@ -126,6 +124,39 @@ class QuarotorStereoROS(MultirotorClient):
             print ('Service call failed: %s' % e)
             
     ##Functions
+    def observation(self) -> NDArray:
+        return [self.rgb, self.depth] if self.__observation_type == "stereo" else [self.rgb, self.depth, self.segmentation]
+    
+    def gimbal(self, airsim_quaternion : Quaternionr):
+        rotation = self.gimbal_orientation * airsim_quaternion
+        self.gimbal_orientation = rotation
+        quaternion = Quaternion()
+        quaternion.x = self.gimbal_orientation.x_val
+        quaternion.y = self.gimbal_orientation.y_val
+        quaternion.z = self.gimbal_orientation.z_val
+        quaternion.w = self.gimbal_orientation.w_val
+
+        gimbal = GimbalAngleQuatCmd()
+        gimbal.camera_name = self.camera_name
+        gimbal.vehicle_name = self.vehicle_name
+        gimbal.orientation = quaternion
+
+        self.__gimbal_pub.publish(gimbal)
+    
+
+class Trajectory(QuarotorROS):
+    def __init__(self,
+                  ip : str, 
+                  vehicle_name : str, 
+                  camera_name : str, 
+                  observation_type : str):
+        
+        super().__init__(ip, vehicle_name, camera_name, observation_type)
+
+        self.__velocity_pub = rospy.Publisher("/airsim_node/"+vehicle_name+"/vel_cmd_body_frame", \
+                                        VelCmd, queue_size=1)
+        
+    ##Functions
     def _velocity(self, linear_x : float, linear_y : float, linear_z : float, angular_z : float):
         
         vel = VelCmd()
@@ -138,52 +169,39 @@ class QuarotorStereoROS(MultirotorClient):
         
         self.__velocity_pub.publish(vel)
         
-    def _gimbal(self, airsim_quaternion : Quaternionr):
-        rotation = self.__gimbal_orientation * airsim_quaternion
-        self.__gimbal_orientation = rotation
-        quaternion = Quaternion()
-        quaternion.x = self.__gimbal_orientation.x_val
-        quaternion.y = self.__gimbal_orientation.y_val
-        quaternion.z = self.__gimbal_orientation.z_val
-        quaternion.w = self.__gimbal_orientation.w_val
-
-        gimbal = GimbalAngleQuatCmd()
-        gimbal.camera_name = "stereo"
-        gimbal.vehicle_name = "Hydrone"
-        gimbal.orientation = quaternion
-
-        self.__gimbal_pub.publish(gimbal)
-    
-    def _observation(self) -> NDArray:
-        return [self.rgb, self.depth]
-
-        
     def get_state(self, action : NDArray) -> Tuple[NDArray, bool]:
-        linear_x, linear_y, linear_z, angular_x, angular_y, angular_z = action
+        linear_x, linear_y, linear_z, angular_z, gimbal_pitch = action
         vx = np.clip(linear_x, -.25, .25)
         vy = np.clip(linear_y, -.25, .25)
         vz = np.clip(linear_z, -.25, .25)
         omegaz = np.clip(angular_z, -.25, .25)
 
-        roll = np.clip(angular_x, -90, 90)
-        pitch = np.clip(angular_y, -45, 45)
-        yaw = np.clip(angular_z, -45, 45)
-        airsimq = to_quaternion(pitch, roll, yaw)
+        pitch = np.clip(gimbal_pitch, -45, 45)
+        airsimq = to_quaternion(pitch, 0, 0)
         
         self._velocity(vx, vy, vz, omegaz)
-        self._gimbal(airsimq)
+        self.gimbal(airsimq)
 
         done = False # condition to finish
         if done:
             self.reset()
-            return self._observation(), done
+            return self.observation(), done
         
         done = False
-        return self._observation(), done
+        return self.observation(), done
         
         
         
-    
+class Position(QuarotorROS):
+    def __init__(self,
+                  ip : str, 
+                  vehicle_name : str, 
+                  camera_name : str, 
+                  observation_type : str):
+        
+        super().__init__(ip, vehicle_name, camera_name, observation_type)
+
+    ##Functions
 
 
 
