@@ -8,19 +8,14 @@ import numpy as np
 from numpy.typing import NDArray
 from typing import List, Tuple
 
-from math import dist
-
 from .airsim_base.client import MultirotorClient
 from .airsim_base.types import Vector3r, Quaternionr, Pose
 from .airsim_base.utils import to_quaternion
 
-from std_msgs.msg import String
+
 from sensor_msgs.msg import Image
 from cv_bridge import CvBridge, CvBridgeError
-from geometry_msgs.msg import Quaternion, Vector3, TransformStamped
-from nav_msgs.msg import Odometry
-
-from tf.transformations import euler_from_quaternion
+from geometry_msgs.msg import Quaternion, TransformStamped
 
 from airsim_ros_pkgs.msg import VelCmd, GimbalAngleQuatCmd
 from airsim_ros_pkgs.srv import Takeoff, Land
@@ -28,35 +23,49 @@ from airsim_ros_pkgs.srv import Takeoff, Land
 from cv_bridge import CvBridge, CvBridgeError
 
 
-def image_transport(img_msg):
-    try:
-        return CvBridge().imgmsg_to_cv2(img_msg, "passthrough")
 
-    except CvBridgeError as e:
-        rospy.logerr("CvBridge Error: {0}".format(e))
        
 class QuarotorROS(MultirotorClient):            
+    @staticmethod
+    def image_transport(img_msg):
+        try:
+            return CvBridge().imgmsg_to_cv2(img_msg, "passthrough")
+
+        except CvBridgeError as e:
+            rospy.logerr("CvBridge Error: {0}".format(e))
+    
+    @staticmethod
+    def rcv_image(cv_img : NDArray, dw : int, dh : int):
+        return cv2.resize(cv_img.copy(), (dw, dh), interpolation = cv2.INTER_AREA)
+    
+    @staticmethod
+    def tf_to_list(tf : TransformStamped):
+        x, y, z = tf.transform.translation.x, tf.transform.translation.y, tf.transform.translation.z
+        qx, qy, qz, qw = tf.transform.rotation.x, tf.transform.rotation.y, tf.transform.rotation.z, tf.transform.rotation.w
+        return [x, y, z, qx, qy, qz, qw]
+        
     def __init__(self,
                   ip : str, 
                   vehicle_name : str, 
                   camera_name : str, 
-                  observation_type : str):
+                  observation_type : str,
+                  resize_img : Tuple):
         
         MultirotorClient.__init__(self, ip)
         rgb_sub = message_filters.Subscriber("/airsim_node/"+vehicle_name+"/stereo/Scene", Image)
         depth_sub = message_filters.Subscriber("/airsim_node/"+vehicle_name+"/stereo/DepthPlanar", Image)
-        odom_sub = message_filters.Subscriber("/airsim_node/"+vehicle_name+"/odom_local_ned", Odometry)
+        tf_cam_sub = message_filters.Subscriber("/airsim_node/"+vehicle_name+"/"+camera_name+"/tf", TransformStamped)
         
-        ts = message_filters.ApproximateTimeSynchronizer([rgb_sub, depth_sub, odom_sub], 10, 0.1, allow_headerless=True)
+        ts = message_filters.ApproximateTimeSynchronizer([rgb_sub, depth_sub, tf_cam_sub], 10, 0.1, allow_headerless=True)
         ts.registerCallback(self._callback_stereo)
         
         if observation_type == 'panoptic':
             seg_sub = message_filters.Subscriber("/airsim_node/"+vehicle_name+"/stereo/Segmentation", Image)
-            ts = message_filters.ApproximateTimeSynchronizer([rgb_sub, depth_sub, seg_sub, odom_sub], 10, 0.1, allow_headerless=True)
+            ts = message_filters.ApproximateTimeSynchronizer([rgb_sub, depth_sub, seg_sub, tf_cam_sub], 10, 0.1, allow_headerless=True)
             ts.registerCallback(self._callback_panoptic)
             
         
-        self.__gimbal_pub = rospy.Publisher("/airsim_node/gimbal_angle_quat_cmd", \
+        self.gimbal_pub = rospy.Publisher("/airsim_node/gimbal_angle_quat_cmd", \
                                         GimbalAngleQuatCmd, queue_size=1)
 
         self.confirmConnection()
@@ -67,15 +76,17 @@ class QuarotorROS(MultirotorClient):
         self.__vehicle_name = vehicle_name
         self.__camera_name = camera_name
         self.__observation_type = observation_type
-
+        self.__resize_img = resize_img
         
-        self.gimbal_orientation = to_quaternion(0, 0, 0)
         self.rgb = np.array([])
         self.depth = np.array([])
         self.segmentation = np.array([])
+        self.tf = TransformStamped()
+        self.gimbal_orientation = to_quaternion(0, 0, 0)
+        
         self.position = None
         self.past_position = None
-        self.tf = np.array([])
+        
         
 
 
@@ -91,56 +102,17 @@ class QuarotorROS(MultirotorClient):
     def observation_type(self):
         return self.__observation_type
                 
-    # Callbacks
-    def callback_image(func):
-        def callback(self, *args, **kwargs):
-            data, img_type = func(self, *args, **kwargs)
-            if data:
-                cv_img = image_transport(data)
-                # resized_img = cv2.resize(cv_img.copy(), (100, 100), interpolation = cv2.INTER_AREA)
-                self.__setattr__(img_type, cv_img)
-            else:
-                info = f"Error in {img_type} cam!"
-                self.__pub_info.publish(info)
-
-        return callback
-    
-    @callback_image
-    def _callback_rgb(self, data):
-        return data, "rgb"
-    
-    @callback_image
-    def _callback_depth(self, data):
-        return data, "depth"
-    
-    @callback_image
-    def _callback_segmentation(self, data):
-        return data, "segmentation"
-    
-    def _callback_odom(self, data):
-        self.odom = data
-        position = data.pose.pose.position
-        orientation = data.pose.pose.orientation
-        q = [orientation.x, orientation.y, orientation.z, orientation.w]
-        orientation = euler_from_quaternion(q)
-        roll, pitch, yaw = orientation
-        self.tf = [position.x, position.y, position.z, roll, pitch, yaw]
+    # Callbacks      
+    def _callback_stereo(self, rgb_data, depth_data, tf_data):
+        self.rgb = self.image_transport(rgb_data)
+        self.depth = self.image_transport(depth_data)
+        self.tf = self.tf_to_list(tf_data)
         
-        self.position = [position.x, position.y, position.z]
-        
-            
-        
-    def _callback_stereo(self, rgb_data, depth_data, odom_data):
-        self._callback_rgb(rgb_data)
-        self._callback_depth(depth_data)
-        self._callback_odom(odom_data)
-        
-        
-    def _callback_panoptic(self, rgb_data, depth_data, segmentation_data, odom_data):
-        self._callback_rgb(rgb_data)
-        self._callback_depth(depth_data)
-        self._callback_segmentation(segmentation_data)
-        self._callback_odom(odom_data)
+    def _callback_panoptic(self, rgb_data, depth_data, segmentation_data, tf_data):
+        self.rgb = self.image_transport(rgb_data)
+        self.depth = self.image_transport(depth_data)
+        self.segmentation = self.image_transport(segmentation_data)
+        self.tf = self.tf_to_list(tf_data)
         
         
     ## Services
@@ -164,17 +136,18 @@ class QuarotorROS(MultirotorClient):
         except rospy.ServiceException as e:
             print ('Service call failed: %s' % e)
             
-    ##Functions
+    ##Functions        
     def get_views(self) -> List[NDArray]:
         return [self.rgb, self.depth] if self.__observation_type == "stereo" else [self.rgb, self.depth, self.segmentation]
         
     def get_observation(self) -> NDArray:
-        rgb = cv2.resize(self.rgb.copy(), (100, 100), interpolation = cv2.INTER_AREA)
-        depth = cv2.resize(self.depth.copy(), (100, 100), interpolation = cv2.INTER_AREA)
+        w, h = self.__resize_img
+        rgb = self.rcv_image(self.rgb, w, h)
+        depth = self.rcv_image(self.depth, w, h)
         obs = [rgb, depth] + self.tf
         
         if self.__observation_type == 'panoptic':
-            segmentation = cv2.resize(segmentation.copy(), (100, 100), interpolation = cv2.INTER_AREA)
+            segmentation = self.rcv_image(self.segmentation, w, h)
             obs == [rgb, depth, segmentation] + self.tf
             
         return obs
@@ -193,7 +166,7 @@ class QuarotorROS(MultirotorClient):
         gimbal.vehicle_name = self.vehicle_name
         gimbal.orientation = quaternion
 
-        self.__gimbal_pub.publish(gimbal)
+        self.gimbal_pub.publish(gimbal)
     
 
 class Trajectory(QuarotorROS):
@@ -201,11 +174,12 @@ class Trajectory(QuarotorROS):
                   ip : str, 
                   vehicle_name : str, 
                   camera_name : str, 
-                  observation_type : str):
+                  observation_type : str,
+                  resize_img : Tuple):
         
-        super().__init__(ip, vehicle_name, camera_name, observation_type)
+        super().__init__(ip, vehicle_name, camera_name, observation_type, resize_img)
 
-        self.__velocity_pub = rospy.Publisher("/airsim_node/"+vehicle_name+"/vel_cmd_body_frame", \
+        self.velocity_pub = rospy.Publisher("/airsim_node/"+vehicle_name+"/vel_cmd_body_frame", \
                                         VelCmd, queue_size=1)
         
     ##Functions
@@ -219,17 +193,14 @@ class Trajectory(QuarotorROS):
         vel.twist.angular.y = 0
         vel.twist.angular.z = angular_z
         
-        self.__velocity_pub.publish(vel)
+        self.velocity_pub.publish(vel)
         
     def get_state(self, action : NDArray) -> Tuple[NDArray, bool]:
         linear_x, linear_y, linear_z, angular_z, gimbal_pitch = action
-        # vx = np.clip(linear_x, -.25, .25)
-        # vy = np.clip(linear_y, -.25, .25)
-        # vz = np.clip(linear_z, -.25, .25)
         
-        vx = np.clip(linear_x, -5, 5)
-        vy = np.clip(linear_y, -5, 5)
-        vz = np.clip(linear_z, -5, 5)
+        vx = np.clip(linear_x, -10, 10)
+        vy = np.clip(linear_y, -10, 10)
+        vz = np.clip(linear_z, -10, 10)
         
         omegaz = np.clip(angular_z, -5, 5)
 
@@ -254,37 +225,20 @@ class Position(QuarotorROS):
                   ip : str, 
                   vehicle_name : str, 
                   camera_name : str, 
-                  observation_type : str):
+                  observation_type : str,
+                  resize_img : Tuple):
         
-        super().__init__(ip, vehicle_name, camera_name, observation_type)
+        super().__init__(ip, vehicle_name, camera_name, observation_type, resize_img)
     
         self.vehicle_pose = self.simGetVehiclePose(vehicle_name)
         
-        self.__nbv_pub = rospy.Publisher("/airsim_node/Hydrone/nbv", \
-                                        TransformStamped, queue_size=1)
-
-    
-        
-        
     ##Functions
-        
     def _pose(self, airsim_pose : Pose):
         next_position = self.vehicle_pose.position + airsim_pose.position
         next_orientation = self.vehicle_pose.orientation * airsim_pose.orientation
         self.vehicle_pose.position = next_position
         self.vehicle_pose.orientation = next_orientation
         self.simSetVehiclePose(Pose(next_position, next_orientation), False)
-        
-    def _odom_to_tf_cam(self):
-        position = self.odom.pose.pose.position
-        orientation = self.odom.pose.pose.orientation
-        
-        tf_cam = TransformStamped()
-        translation = Vector3(position.x, position.y, position.z)
-        rotation = orientation
-        tf_cam.transform.translation = translation
-        tf_cam.transform.rotation = rotation
-        return tf_cam
         
     def get_state(self, action : NDArray) -> Tuple[NDArray, bool]:
         x, y, z, yaw, gimbal_pitch= action
@@ -301,12 +255,9 @@ class Position(QuarotorROS):
         action_pitch = to_quaternion(pitch, 0, 0)
         self.gimbal(action_pitch)
         
-        tf_cam = self._odom_to_tf_cam()
-        self.__nbv_pub.publish(tf_cam)
-        
         done = False # condition to finish
         if done:
-            self.reset()
+            self.reset() #reset of airsim
             return self.get_observation(), done
         
         done = False
