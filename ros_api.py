@@ -23,9 +23,7 @@ from airsim_ros_pkgs.srv import Takeoff, Land
 from cv_bridge import CvBridge, CvBridgeError
 
 
-
-       
-class QuarotorROS(MultirotorClient):            
+class RobotBase(MultirotorClient):            
     @staticmethod
     def image_transport(img_msg):
         try:
@@ -89,7 +87,6 @@ class QuarotorROS(MultirotorClient):
         
         
 
-
     @property
     def vehicle_name(self):
         return self.__vehicle_name
@@ -144,11 +141,11 @@ class QuarotorROS(MultirotorClient):
         w, h = self.__resize_img
         rgb = self.rcv_image(self.rgb, w, h)
         depth = self.rcv_image(self.depth, w, h)
-        obs = [rgb, depth] + self.tf
+        obs = [rgb, depth, self.tf]
         
         if self.__observation_type == 'panoptic':
             segmentation = self.rcv_image(self.segmentation, w, h)
-            obs == [rgb, depth, segmentation] + self.tf
+            obs == [rgb, depth, segmentation, self.tf]
             
         return obs
     
@@ -167,7 +164,77 @@ class QuarotorROS(MultirotorClient):
         gimbal.orientation = quaternion
 
         self.gimbal_pub.publish(gimbal)
+        
+        
+class ActPosition(RobotBase):
+    def __init__(self,
+                  ip : str, 
+                  vehicle_name : str, 
+                  camera_name : str, 
+                  observation_type : str,
+                  resize_img : Tuple):
+        
+        super().__init__(ip, vehicle_name, camera_name, observation_type, resize_img)
     
+        self.vehicle_pose = self.simGetVehiclePose(vehicle_name)
+        
+    ##Functions
+    def _pose(self, airsim_pose : Pose):
+        next_position = self.vehicle_pose.position + airsim_pose.position
+        next_orientation = self.vehicle_pose.orientation * airsim_pose.orientation
+        self.vehicle_pose.position = next_position
+        self.vehicle_pose.orientation = next_orientation
+        self.simSetVehiclePose(Pose(next_position, next_orientation), False)
+        
+    def get_state(self, action : NDArray) -> Tuple[NDArray, bool]:
+        x, y, z, yaw, gimbal_pitch= action
+        
+        px = np.clip(x, -60, 60)
+        py = np.clip(y, -155, 155)
+        pz = np.clip(z, -60, 60)
+        yaw = np.clip(yaw, -45, 45)
+        
+        action_pose = Pose(Vector3r(px, py, pz), to_quaternion(0,0,yaw))
+        self._pose(action_pose)
+        
+        pitch = np.clip(gimbal_pitch, -45, 45)
+        action_pitch = to_quaternion(pitch, 0, 0)
+        self.gimbal(action_pitch)
+        
+        done = False # condition to finish
+        if done:
+            self.reset() #reset of airsim
+            return self.get_observation(), done
+        
+        done = False
+        return self.get_observation(), done
+        
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 class Trajectory(QuarotorROS):
     def __init__(self,
@@ -217,53 +284,3 @@ class Trajectory(QuarotorROS):
         
         done = False
         return self.get_observation(), done
-        
-        
-        
-class Position(QuarotorROS):
-    def __init__(self,
-                  ip : str, 
-                  vehicle_name : str, 
-                  camera_name : str, 
-                  observation_type : str,
-                  resize_img : Tuple):
-        
-        super().__init__(ip, vehicle_name, camera_name, observation_type, resize_img)
-    
-        self.vehicle_pose = self.simGetVehiclePose(vehicle_name)
-        
-    ##Functions
-    def _pose(self, airsim_pose : Pose):
-        next_position = self.vehicle_pose.position + airsim_pose.position
-        next_orientation = self.vehicle_pose.orientation * airsim_pose.orientation
-        self.vehicle_pose.position = next_position
-        self.vehicle_pose.orientation = next_orientation
-        self.simSetVehiclePose(Pose(next_position, next_orientation), False)
-        
-    def get_state(self, action : NDArray) -> Tuple[NDArray, bool]:
-        x, y, z, yaw, gimbal_pitch= action
-        
-        px = np.clip(x, -60, 60)
-        py = np.clip(y, -155, 155)
-        pz = np.clip(z, -60, 60)
-        yaw = np.clip(yaw, -45, 45)
-        
-        action_pose = Pose(Vector3r(px, py, pz), to_quaternion(0,0,yaw))
-        self._pose(action_pose)
-        
-        pitch = np.clip(gimbal_pitch, -45, 45)
-        action_pitch = to_quaternion(pitch, 0, 0)
-        self.gimbal(action_pitch)
-        
-        done = False # condition to finish
-        if done:
-            self.reset() #reset of airsim
-            return self.get_observation(), done
-        
-        done = False
-        return self.get_observation(), done
-        
-
-
-
-
