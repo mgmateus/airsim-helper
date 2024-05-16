@@ -184,7 +184,7 @@ class RotorPy(MultirotorClient):
     def tf_to_list(tf : TransformStamped):
         x, y, z = tf.transform.translation.x, tf.transform.translation.y, tf.transform.translation.z
         qx, qy, qz, qw = tf.transform.rotation.x, tf.transform.rotation.y, tf.transform.rotation.z, tf.transform.rotation.w
-        return [x, y, z, qx, qy, qz, qw]
+        return np.array([x, y, z, qx, qy, qz, qw])
         
     def __init__(self,
                   ip : str, 
@@ -279,7 +279,6 @@ class RotorPy(MultirotorClient):
             try:
                 tf_data = rospy.wait_for_message("/airsim_node/"+vehicle_name+"/"+camera_name+"/tf", TransformStamped, timeout=5)
                 tf_ = self.tf_to_list(tf_data)         
-                print('wait for tf')     
             except:
                 pass
 
@@ -315,7 +314,8 @@ class RotorPy(MultirotorClient):
         
     def get_observation(self) -> NDArray:
         
-        obs = {'rgb' : self.tf} #, 'depth' : self.depth, 'tf' : self.tf}
+        obs = {'rgb' : self.rgb, 'depth' : self.depth, 'tf' : self.tf}
+        print(obs)
         # print(self.depth)
         # if self.__observation_type == 'panoptic':
             # segmentation = self.rcv_image(self.segmentation, w, h)
