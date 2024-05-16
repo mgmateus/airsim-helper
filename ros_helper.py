@@ -166,7 +166,7 @@ class RotorROS(MultirotorClient):
         self.gimbal_pub.publish(gimbal)
 
 
-class RotorPy(MultirotorClient):       
+class RotorPyROS(MultirotorClient):       
          
     @staticmethod
     def image_transport(img_msg):
@@ -233,7 +233,6 @@ class RotorPy(MultirotorClient):
             try:
                 image_data = rospy.wait_for_message("/airsim_node/"+vehicle_name+"/"+camera_name+"/Scene", Image, timeout=5)
                 cv_image = self.image_transport(image_data)  
-                # print(cv_image)              
             except:
                 pass
 
@@ -316,12 +315,10 @@ class RotorPy(MultirotorClient):
         
         obs = {'rgb' : self.rgb, 'depth' : self.depth, 'tf' : self.tf}
         print(obs)
-        # print(self.depth)
-        # if self.__observation_type == 'panoptic':
-            # segmentation = self.rcv_image(self.segmentation, w, h)
-            # obs == {'rgb' :self.rgb(), 'depth' : self.depth(), 'segmentation' : self.segmentation(), 'tf' : self.tf()}
+        if self.__observation_type == 'panoptic':
+            obs == {'rgb' : self.rgb, 'depth' : self.depth, 'segmentation' : self.segmentation, 'tf' : self.tf}
         
-        return True
+        return obs
     
     def gimbal(self, airsim_quaternion : Quaternionr):
         rotation = self.gimbal_orientation * airsim_quaternion
@@ -340,7 +337,7 @@ class RotorPy(MultirotorClient):
         self.gimbal_pub.publish(gimbal)
         
         
-class ActPosition(RotorPy):
+class ActPosition(RotorPyROS):
     def __init__(self,
                   ip : str, 
                   vehicle_name : str, 
@@ -358,23 +355,14 @@ class ActPosition(RotorPy):
         self.vehicle_pose.position = next_position
         self.vehicle_pose.orientation = next_orientation
         self.simSetVehiclePose(Pose(next_position, next_orientation), True)
-
-    def _normalize_value(self, x, min_val, max_val, a, b):
-        return ((x - min_val) / (max_val - min_val)) * (b - a) + a
         
-    def moveon(self, action : NDArray) -> Tuple[NDArray, bool]:
-        x, y, z, yaw, gimbal_pitch= action
-
-        px = self._normalize_value(x, -1, 1, -60, 60)
-        py = self._normalize_value(y, -1, 1, -155, 155)
-        pz = self._normalize_value(z*-1, -1, 1, -60, 60)
-        yaw = self._normalize_value(yaw, -1, 1, -45, 45)
+    def moveon(self, action : NDArray) -> bool:
+        px, py, pz, yaw, gimbal_pitch= action
 
         action_pose = Pose(Vector3r(px, py, pz), to_quaternion(0,0,yaw))
         self._pose(action_pose)
         
-        pitch = self._normalize_value(gimbal_pitch, -1, 1, -45, 45)
-        action_pitch = to_quaternion(pitch, 0, 0)
+        action_pitch = to_quaternion(gimbal_pitch, 0, 0)
         self.gimbal(action_pitch)
         return True
         
