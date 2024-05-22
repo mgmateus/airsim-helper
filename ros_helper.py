@@ -6,10 +6,10 @@ import os
 import numpy as np
 
 from numpy.typing import NDArray
-from typing import List, Tuple
+from typing import List
 
 from airsim_base.client import MultirotorClient
-from airsim_base.types import Vector3r, Quaternionr, Pose, KinematicsState
+from airsim_base.types import Vector3r, Quaternionr, Pose
 from airsim_base.utils import to_quaternion
 
 
@@ -190,6 +190,7 @@ class RotorPyROS(MultirotorClient):
                   ip : str, 
                   vehicle_name : str, 
                   camera_name : str, 
+                  start_pose : list,
                   observation_type : str):
         
         MultirotorClient.__init__(self, ip)            
@@ -205,11 +206,12 @@ class RotorPyROS(MultirotorClient):
         self.__vehicle_name = vehicle_name
         self.__camera_name = camera_name
         self.__observation_type = observation_type
+       
+        x, y, z, roll, pitch, yaw = start_pose
+        self.start_pose = Pose(Vector3r(x, y, z), to_quaternion(pitch, roll, yaw))
+        self.pose = self.simGetVehiclePose(vehicle_name)
 
-        self.gimbal_orientation = to_quaternion(0, 0, 0)
-        
-        self.pose = self.past_pose = self.simGetVehiclePose(vehicle_name)
-        
+        self.gimbal_orientation = to_quaternion(pitch, 0, 0)
         
     @property
     def vehicle_name(self):
@@ -223,10 +225,39 @@ class RotorPyROS(MultirotorClient):
     def observation_type(self):
         return self.__observation_type
     
-    @property
-    def rgb(self, camera_name ='', vehicle_name=''):
-        camera_name = camera_name or self.__camera_name
+    
+    
+        
+    ## Services
+    def take_off(self, vehicle_name : str = ''):
         vehicle_name = vehicle_name or self.__vehicle_name
+        try:
+            service = rospy.ServiceProxy("/airsim_node/"+vehicle_name+"/takeoff", Takeoff)
+            rospy.wait_for_service("/airsim_node/"+vehicle_name+"/takeoff")
+
+            service(True)
+
+        except rospy.ServiceException as e:
+            print ('Service call failed: %s' % e)
+
+    def land(self, vehicle_name : str = ''):
+        vehicle_name = vehicle_name or self.__vehicle_name
+        try:
+            service = rospy.ServiceProxy("/airsim_node/"+vehicle_name+"/land", Land)
+            rospy.wait_for_service("/airsim_node/"+vehicle_name+"/land")
+
+            service(True)
+
+        except rospy.ServiceException as e:
+            print ('Service call failed: %s' % e)
+
+    
+    
+
+    ##Functions        
+    def rgb(self, vehicle_name : str ='', camera_name : str =''):
+        vehicle_name = vehicle_name or self.__vehicle_name
+        camera_name = camera_name or self.__camera_name
         image_data = None
         cv_image = None
         while image_data is None :
@@ -238,10 +269,10 @@ class RotorPyROS(MultirotorClient):
 
         return cv_image
     
-    @property        
-    def depth(self, camera_name ='', vehicle_name=''):
-        camera_name = camera_name or self.__camera_name
+            
+    def depth(self, vehicle_name : str ='', camera_name : str =''):
         vehicle_name = vehicle_name or self.__vehicle_name
+        camera_name = camera_name or self.__camera_name
         image_data = None
         cv_image = None
         while image_data is None :
@@ -253,10 +284,10 @@ class RotorPyROS(MultirotorClient):
 
         return cv_image
     
-    @property
-    def segmentation(self, camera_name ='', vehicle_name=''):
-        camera_name = camera_name or self.__camera_name
+    
+    def segmentation(self, vehicle_name : str ='', camera_name : str =''):
         vehicle_name = vehicle_name or self.__vehicle_name
+        camera_name = camera_name or self.__camera_name
         image_data = None
         cv_image = None
         while image_data is None :
@@ -268,10 +299,10 @@ class RotorPyROS(MultirotorClient):
 
         return cv_image
     
-    @property
-    def tf(self, camera_name ='', vehicle_name=''):
-        camera_name = camera_name or self.__camera_name
+    
+    def tf(self, vehicle_name : str ='', camera_name : str =''):
         vehicle_name = vehicle_name or self.__vehicle_name
+        camera_name = camera_name or self.__camera_name
         tf_data = None
         tf_ = None
         while tf_data is None :
@@ -282,47 +313,22 @@ class RotorPyROS(MultirotorClient):
                 pass
 
         return tf_
+    
+    
         
-    ## Services
-    def take_off(self, vehicle_name):
-        try:
-            service = rospy.ServiceProxy("/airsim_node/"+vehicle_name+"/takeoff", Takeoff)
-            rospy.wait_for_service("/airsim_node/"+vehicle_name+"/takeoff")
-
-            service()
-
-        except rospy.ServiceException as e:
-            print ('Service call failed: %s' % e)
-
-    def land(self, vehicle_name):
-        try:
-            service = rospy.ServiceProxy("/airsim_node/"+vehicle_name+"/land", Land)
-            rospy.wait_for_service("/airsim_node/"+vehicle_name+"/land")
-
-            service()
-
-        except rospy.ServiceException as e:
-            print ('Service call failed: %s' % e)
-
-    
-    
-
-    ##Functions        
+        
     def get_views(self) -> List[NDArray]:
         return [self.rgb, self.depth] if self.__observation_type == "stereo" else [self.rgb, self.depth, self.segmentation]
         
     def get_observation(self) -> NDArray:
         
-        obs = {'rgb' : self.rgb, 'depth' : self.depth, 'tf' : self.tf}
-        print(obs)
+        obs = {'rgb' : self.rgb(), 'depth' : self.depth(), 'tf' : self.tf()}
         if self.__observation_type == 'panoptic':
-            obs == {'rgb' : self.rgb, 'depth' : self.depth, 'segmentation' : self.segmentation, 'tf' : self.tf}
+            obs == {'rgb' : self.rgb(), 'depth' : self.depth(), 'segmentation' : self.segmentation(), 'tf' : self.tf()}
         
         return obs
     
-    def gimbal(self, airsim_quaternion : Quaternionr):
-        rotation = self.gimbal_orientation * airsim_quaternion
-        self.gimbal_orientation = rotation
+    def pgimbal(self, vehicle_name : str ='', camera_name : str =''):
         quaternion = Quaternion()
         quaternion.x = self.gimbal_orientation.x_val
         quaternion.y = self.gimbal_orientation.y_val
@@ -330,31 +336,52 @@ class RotorPyROS(MultirotorClient):
         quaternion.w = self.gimbal_orientation.w_val
 
         gimbal = GimbalAngleQuatCmd()
-        gimbal.camera_name = self.camera_name
-        gimbal.vehicle_name = self.vehicle_name
+        gimbal.vehicle_name = vehicle_name
+        gimbal.camera_name = camera_name
         gimbal.orientation = quaternion
 
         self.gimbal_pub.publish(gimbal)
         
+        return True
+    
+    def gimbal(self, airsim_quaternion : Quaternionr, vehicle_name : str ='', camera_name : str =''):
+        vehicle_name = vehicle_name or self.__vehicle_name
+        camera_name = camera_name or self.__camera_name
+        
+        
+        rotation = self.gimbal_orientation * airsim_quaternion
+        self.gimbal_orientation = rotation
+        self.pgimbal(vehicle_name, camera_name)
+        
+        return True
+        
+    def set_start_pose(self, position : list, orientation: list, vehicle_name : str = ''):
+        x, y, z = position
+        roll, pitch, yaw = orientation
+        start_pose = Pose(Vector3r(x, y, z), to_quaternion(pitch, roll, yaw))
+        self.simSetVehiclePose(start_pose, ignore_collision=True, vehicle_name=vehicle_name)
+        
+        return True
         
 class ActPosition(RotorPyROS):
     def __init__(self,
                   ip : str, 
                   vehicle_name : str, 
                   camera_name : str, 
+                  start_pose : list,
                   observation_type : str):
         
-        super().__init__(ip, vehicle_name, camera_name, observation_type)
-    
-        self.vehicle_pose = self.simGetVehiclePose(vehicle_name)
-        
+        super().__init__(ip, vehicle_name, camera_name, start_pose, observation_type)
+            
     ##Functions
     def _pose(self, airsim_pose : Pose):
-        next_position = self.vehicle_pose.position + airsim_pose.position
-        next_orientation = self.vehicle_pose.orientation * airsim_pose.orientation
-        self.vehicle_pose.position = next_position
-        self.vehicle_pose.orientation = next_orientation
+        next_position = self.pose.position + airsim_pose.position
+        next_orientation = self.pose.orientation * airsim_pose.orientation
+        self.pose.position = next_position
+        self.pose.orientation = next_orientation
         self.simSetVehiclePose(Pose(next_position, next_orientation), True)
+        
+        return True
         
     def moveon(self, action : NDArray) -> bool:
         px, py, pz, yaw, gimbal_pitch= action
@@ -364,6 +391,7 @@ class ActPosition(RotorPyROS):
         
         action_pitch = to_quaternion(gimbal_pitch, 0, 0)
         self.gimbal(action_pitch)
+        
         return True
         
         
