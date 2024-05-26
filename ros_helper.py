@@ -10,7 +10,7 @@ from typing import List
 
 from airsim_base.client import MultirotorClient
 from airsim_base.types import Vector3r, Quaternionr, Pose
-from airsim_base.utils import to_quaternion
+from airsim_base.utils import to_quaternion, to_eularian_angles
 
 
 from sensor_msgs.msg import Image
@@ -189,7 +189,8 @@ class RotorPyROS(MultirotorClient):
     def __init__(self,
                   ip : str, 
                   vehicle_name : str, 
-                  camera_name : str, 
+                  camera_name : str,
+                  global_pose : list, 
                   start_pose : list,
                   observation_type : str):
         
@@ -207,6 +208,8 @@ class RotorPyROS(MultirotorClient):
         self.__camera_name = camera_name
         self.__observation_type = observation_type
        
+        x, y, z, roll, pitch, yaw = global_pose
+        self.global_pose = Pose(Vector3r(x, y, z), to_quaternion(pitch, roll, yaw))
         x, y, z, roll, pitch, yaw = start_pose
         self.start_pose = Pose(Vector3r(x, y, z), to_quaternion(pitch, roll, yaw))
         self.pose = self.simGetVehiclePose(vehicle_name)
@@ -315,7 +318,12 @@ class RotorPyROS(MultirotorClient):
         return tf_
     
     
+    def objectp2list(self, object_name: str):
+        obj_pose = self.simGetObjectPose(object_name)
         
+        position = list(obj_pose.position.to_numpy_array())
+        orientation = list(to_eularian_angles(obj_pose.orientation))
+        return position + orientation
         
     def get_views(self) -> List[NDArray]:
         return [self.rgb, self.depth] if self.__observation_type == "stereo" else [self.rgb, self.depth, self.segmentation]
@@ -362,16 +370,23 @@ class RotorPyROS(MultirotorClient):
         self.simSetVehiclePose(start_pose, ignore_collision=True, vehicle_name=vehicle_name)
         
         return True
+    
+    def set_object_pose(self, position : list, orientation: list, object_name : str = ''):
+        x, y, z = position
+        roll, pitch, yaw = orientation
+        start_pose = Pose(Vector3r(x, y, z), to_quaternion(pitch, roll, yaw))
+        self.simSetObjectPose(object_name, start_pose)
         
 class ActPosition(RotorPyROS):
     def __init__(self,
                   ip : str, 
                   vehicle_name : str, 
                   camera_name : str, 
+                  global_pose : list,
                   start_pose : list,
                   observation_type : str):
         
-        super().__init__(ip, vehicle_name, camera_name, start_pose, observation_type)
+        super().__init__(ip, vehicle_name, camera_name, global_pose, start_pose, observation_type)
             
     ##Functions
     def _pose(self, airsim_pose : Pose):
