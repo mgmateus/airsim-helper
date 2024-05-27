@@ -362,11 +362,34 @@ class RotorPyROS(MultirotorClient):
         self.pgimbal(vehicle_name, camera_name)
         
         return True
+    
+    def get_start_pose(self):
+        position = self.start_pose.position.to_numpy_array().tolist()
+        orientation = self.start_pose.orientation.to_numpy_array().tolist()
+        return position, orientation
+    
+    def get_pose(self, vehicle_name : str =""):
+        pose = self.simGetVehiclePose(vehicle_name)
+        position = pose.position.to_numpy_array().tolist()
+        orientation = pose.orientation.to_numpy_array().tolist()
+        return position, orientation
         
-    def set_start_pose(self, position : list, orientation: list, vehicle_name : str = ''):
+    def set_start_pose(self, position : list = [], orientation: list = [], vehicle_name : str = ''):
+        if position and orientation:
+            x, y, z = position
+            roll, pitch, yaw = orientation
+            start_pose = Pose(Vector3r(x, y, z), to_quaternion(pitch, roll, yaw))
+            self.start_pose = start_pose
+        
+        self.simSetVehiclePose(self.start_pose, ignore_collision=True, vehicle_name=vehicle_name)
+        
+        return True
+    
+    def set_pose(self, position : list, orientation: list, vehicle_name : str = ''):
         x, y, z = position
         roll, pitch, yaw = orientation
         start_pose = Pose(Vector3r(x, y, z), to_quaternion(pitch, roll, yaw))
+        
         self.simSetVehiclePose(start_pose, ignore_collision=True, vehicle_name=vehicle_name)
         
         return True
