@@ -4,6 +4,7 @@ import message_filters
 import os
 
 import numpy as np
+import open3d as o3d
 
 from numpy.typing import NDArray
 from typing import List
@@ -190,6 +191,8 @@ class RotorPyROS(MultirotorClient):
                   ip : str, 
                   vehicle_name : str, 
                   camera_name : str,
+                  image_dim : tuple,
+                  camera_fov : float,
                   global_pose : list, 
                   start_pose : list,
                   observation_type : str):
@@ -207,6 +210,12 @@ class RotorPyROS(MultirotorClient):
         self.__vehicle_name = vehicle_name
         self.__camera_name = camera_name
         self.__observation_type = observation_type
+        self.__intrinsic = o3d.camera.PinholeCameraIntrinsic()
+        
+        image_width, image_height = image_dim
+        fov_rad = camera_fov * np.pi/180
+        fd = (image_width/2.0) / np.tan(fov_rad/2.0)
+        self.__intrinsic.set_intrinsics(image_width, image_height, fd, fd, image_width/2 - 0.5, image_height/2 - 0.5)
        
         x, y, z, roll, pitch, yaw = global_pose
         self.global_pose = Pose(Vector3r(x, y, z), to_quaternion(pitch, roll, yaw))
@@ -228,9 +237,39 @@ class RotorPyROS(MultirotorClient):
     def observation_type(self):
         return self.__observation_type
     
+    @property
+    def intrinsic(self):
+        return self.__intrinsic
     
-    
+    @property
+    def rgb(self):
+        return {'rgb' : self._rgb(), 'tf' : self._tf()}
         
+    @property
+    def stereo(self):
+        return {'rgb' : self._rgb(), 'depth' : self._depth(), 'tf' : self._tf()}
+    
+    @property
+    def panoptic(self):
+        return {'rgb' : self._rgb(), 'depth' : self._depth(), 'segmentation' : self._segmentation(), 'tf' : self._tf()}
+    
+    @property
+    def stereo_occupancy(self):
+        rgb = self._rgb()
+        depth = self._depth()
+        pcd = self._point_cloud(rgb[...,::-1].copy(), depth.astype(np.float32))
+        
+        return {'rgb' : rgb, 'depth' : depth, 'point_cloud' : pcd, 'tf' : self._tf()}
+    
+    @property
+    def panoptic_occupancy(self):
+        rgb = self._rgb()
+        depth = self._depth()
+        pcd = self._point_cloud(rgb[...,::-1].copy(), depth.astype(np.float32))
+        
+        return {'rgb' : rgb, 'depth' : depth, 'segmentation' : self._segmentation(), 'point_cloud' : pcd, 'tf' : self._tf()}
+    
+    
     ## Services
     def take_off(self, vehicle_name : str = ''):
         vehicle_name = vehicle_name or self.__vehicle_name
@@ -258,7 +297,7 @@ class RotorPyROS(MultirotorClient):
     
 
     ##Functions        
-    def rgb(self, vehicle_name : str ='', camera_name : str =''):
+    def _rgb(self, vehicle_name : str ='', camera_name : str =''):
         vehicle_name = vehicle_name or self.__vehicle_name
         camera_name = camera_name or self.__camera_name
         image_data = None
@@ -273,7 +312,7 @@ class RotorPyROS(MultirotorClient):
         return cv_image
     
             
-    def depth(self, vehicle_name : str ='', camera_name : str =''):
+    def _depth(self, vehicle_name : str ='', camera_name : str =''):
         vehicle_name = vehicle_name or self.__vehicle_name
         camera_name = camera_name or self.__camera_name
         image_data = None
@@ -288,7 +327,7 @@ class RotorPyROS(MultirotorClient):
         return cv_image
     
     
-    def segmentation(self, vehicle_name : str ='', camera_name : str =''):
+    def _segmentation(self, vehicle_name : str ='', camera_name : str =''):
         vehicle_name = vehicle_name or self.__vehicle_name
         camera_name = camera_name or self.__camera_name
         image_data = None
@@ -302,8 +341,22 @@ class RotorPyROS(MultirotorClient):
 
         return cv_image
     
+    def _rgbd(self, image : NDArray, depth : NDArray):
+        o3d_image = o3d.geometry.Image(image)
+        o3d_depth = o3d.geometry.Image(depth)
+        rgbd = o3d.geometry.RGBDImage.create_from_color_and_depth(o3d_image, 
+                                                                  o3d_depth, 
+                                                                  depth_scale=1.0, 
+                                                                  depth_trunc=1000, 
+                                                                  convert_rgb_to_intensity=False)
+            
+        return rgbd
     
-    def tf(self, vehicle_name : str ='', camera_name : str =''):
+    def _point_cloud(self, image : NDArray, depth : NDArray):
+        rgbd = self._rgbd(image, depth)
+        return o3d.geometry.PointCloud.create_from_rgbd_image(rgbd, self.__intrinsic)
+    
+    def _tf(self, vehicle_name : str ='', camera_name : str =''):
         vehicle_name = vehicle_name or self.__vehicle_name
         camera_name = camera_name or self.__camera_name
         tf_data = None
@@ -317,7 +370,6 @@ class RotorPyROS(MultirotorClient):
 
         return tf_
     
-    
     def objectp2list(self, object_name: str):
         obj_pose = self.simGetObjectPose(object_name)
         
@@ -329,12 +381,7 @@ class RotorPyROS(MultirotorClient):
         return [self.rgb, self.depth] if self.__observation_type == "stereo" else [self.rgb, self.depth, self.segmentation]
         
     def get_observation(self) -> NDArray:
-        
-        obs = {'rgb' : self.rgb(), 'depth' : self.depth(), 'tf' : self.tf()}
-        if self.__observation_type == 'panoptic':
-            obs == {'rgb' : self.rgb(), 'depth' : self.depth(), 'segmentation' : self.segmentation(), 'tf' : self.tf()}
-        
-        return obs
+        return self.__getattribute__(self.__observation_type)
     
     def pgimbal(self, vehicle_name : str ='', camera_name : str =''):
         quaternion = Quaternion()
@@ -404,12 +451,14 @@ class ActPosition(RotorPyROS):
     def __init__(self,
                   ip : str, 
                   vehicle_name : str, 
-                  camera_name : str, 
-                  global_pose : list,
+                  camera_name : str,
+                  image_dim : tuple,
+                  camera_fov : float,
+                  global_pose : list, 
                   start_pose : list,
                   observation_type : str):
         
-        super().__init__(ip, vehicle_name, camera_name, global_pose, start_pose, observation_type)
+        super().__init__(ip, vehicle_name, camera_name, image_dim, camera_fov, global_pose, start_pose, observation_type)
             
     ##Functions
     def _pose(self, airsim_pose : Pose):
