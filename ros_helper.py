@@ -6,11 +6,12 @@ import os
 import numpy as np
 import open3d as o3d
 
+from functools import singledispatchmethod
 from numpy.typing import NDArray
 from typing import List
 
 from airsim_base.client import MultirotorClient
-from airsim_base.types import Vector3r, Quaternionr, Pose
+from airsim_base.types import Vector3r, Quaternionr, Pose, KinematicsState
 from airsim_base.utils import to_quaternion, to_eularian_angles
 
 
@@ -18,7 +19,7 @@ from sensor_msgs.msg import Image
 from cv_bridge import CvBridge, CvBridgeError
 from geometry_msgs.msg import Quaternion, TransformStamped
 
-from airsim_ros_pkgs.msg import VelCmd, GimbalAngleQuatCmd
+from airsim_ros_pkgs.msg import VelCmd, GimbalAngleQuatCmd, GimbalAngleEulerCmd
 from airsim_ros_pkgs.srv import Takeoff, Land
 
 from cv_bridge import CvBridge, CvBridgeError
@@ -143,7 +144,7 @@ class RotorROS(MultirotorClient):
         # rgb = self.rcv_image(self.rgb, w, h)
         # depth = self.rcv_image(self.depth, w, h)
         obs = {'rgb' : self.rgb, 'depth' : self.depth, 'tf' : self.tf}
-        print(self.tf)
+        # print(self.tf)
         if self.__observation_type == 'panoptic':
             # segmentation = self.rcv_image(self.segmentation, w, h)
             obs == {'rgb' : self.rgb, 'depth' : self.depth, 'segmentation' : self.segmentation, 'tf' : self.tf}
@@ -200,7 +201,9 @@ class RotorPyROS(MultirotorClient):
         MultirotorClient.__init__(self, ip)            
         
         self.gimbal_pub = rospy.Publisher("/airsim_node/gimbal_angle_quat_cmd", \
-                                        GimbalAngleQuatCmd, queue_size=1)
+                                        GimbalAngleQuatCmd, queue_size=2)
+        self.gimbal2_pub = rospy.Publisher("/airsim_node/gimbal_angle_euler_cmd", \
+                                        GimbalAngleEulerCmd, queue_size=1)
 
         self.confirmConnection()
         self.enableApiControl(True)
@@ -242,6 +245,10 @@ class RotorPyROS(MultirotorClient):
         return self.__intrinsic
     
     @property
+    def tf_info(self):
+        return self._tf()
+    
+    @property
     def rgb(self):
         return {'rgb' : self._rgb(), 'tf' : self._tf()}
         
@@ -271,13 +278,13 @@ class RotorPyROS(MultirotorClient):
     
     
     ## Services
-    def take_off(self, vehicle_name : str = ''):
+    def take_off(self, vehicle_name : str = '', flag : bool = False):
         vehicle_name = vehicle_name or self.__vehicle_name
         try:
             service = rospy.ServiceProxy("/airsim_node/"+vehicle_name+"/takeoff", Takeoff)
             rospy.wait_for_service("/airsim_node/"+vehicle_name+"/takeoff")
 
-            service(True)
+            service(flag)
 
         except rospy.ServiceException as e:
             print ('Service call failed: %s' % e)
@@ -396,8 +403,17 @@ class RotorPyROS(MultirotorClient):
         gimbal.orientation = quaternion
 
         self.gimbal_pub.publish(gimbal)
-        
+        # rospy.Rate(0.1).sleep()
         return True
+    
+    def pegimbal(self, roll, pitch, yaw, vehicle_name : str ='', camera_name : str =''):
+        euler = GimbalAngleEulerCmd()
+        euler.vehicle_name = vehicle_name
+        euler.camera_name = camera_name
+        euler.roll = roll
+        euler.pitch = pitch
+        euler.yaw = yaw
+        self.gimbal2_pub.publish(euler)
     
     def gimbal(self, airsim_quaternion : Quaternionr, vehicle_name : str ='', camera_name : str =''):
         vehicle_name = vehicle_name or self.__vehicle_name
@@ -415,11 +431,36 @@ class RotorPyROS(MultirotorClient):
         orientation = self.start_pose.orientation.to_numpy_array().tolist()
         return position, orientation
     
-    def get_pose(self, vehicle_name : str =""):
+    @singledispatchmethod
+    def get_pose(self, euler : bool, vehicle_name : str):
         pose = self.simGetVehiclePose(vehicle_name)
         position = pose.position.to_numpy_array().tolist()
-        orientation = pose.orientation.to_numpy_array().tolist()
+        orientation = list(to_eularian_angles(pose.orientation)) if euler else pose.orientation.to_numpy_array().tolist()
         return position, orientation
+
+    @get_pose.register
+    def _(self, vehicle_name : str):
+        pose = self.simGetVehiclePose(vehicle_name)
+        return pose
+    
+    def set_kinematics(self,    
+                       position : Vector3r, 
+                       orientation : Quaternionr, 
+                       linear_velocity : Vector3r = Vector3r(0,0,0), 
+                       angular_velocity : Vector3r = Vector3r(0,0,0), 
+                       linear_acceleration : Vector3r = Vector3r(0,0,0),
+                       angular_acceleration : Vector3r = Vector3r(0,0,0),
+                       vehicle_name : str = ''):
+        
+        k = KinematicsState()
+        k.position = position
+        k.orientation = orientation
+        k.linear_velocity = linear_velocity
+        k.angular_velocity = angular_velocity
+        k.linear_acceleration = linear_acceleration
+        k.angular_acceleration = angular_acceleration
+        
+        self.simSetKinematics(k, True, vehicle_name)
         
     def set_start_pose(self, position : list = [], orientation: list = [], vehicle_name : str = ''):
         if position and orientation:
@@ -438,14 +479,20 @@ class RotorPyROS(MultirotorClient):
         start_pose = Pose(Vector3r(x, y, z), to_quaternion(pitch, roll, yaw))
         
         self.simSetVehiclePose(start_pose, ignore_collision=True, vehicle_name=vehicle_name)
-        
         return True
     
     def set_object_pose(self, position : list, orientation: list, object_name : str = ''):
+        # print(position, orientation, object_name)
+        past_pose = self.simGetObjectPose(object_name)
         x, y, z = position
         roll, pitch, yaw = orientation
         start_pose = Pose(Vector3r(x, y, z), to_quaternion(pitch, roll, yaw))
         self.simSetObjectPose(object_name, start_pose)
+        current_pose = self.simGetObjectPose(object_name)
+        
+        return past_pose, current_pose
+        
+   
         
 class ActPosition(RotorPyROS):
     def __init__(self,
@@ -459,16 +506,71 @@ class ActPosition(RotorPyROS):
                   observation_type : str):
         
         super().__init__(ip, vehicle_name, camera_name, image_dim, camera_fov, global_pose, start_pose, observation_type)
+        
+        self.__home_pose = Pose()    
+        
+    @property
+    def home_pose(self):
+        position = self.__home_pose.position.to_numpy_array().tolist()
+        orientation = list(to_eularian_angles(self.__home_pose.orientation))
+        return position, orientation
+    
+    @home_pose.setter
+    def home_pose(self, pose):
+        x, y, z = pose[:3]
+        roll, pitch, yaw = pose[3:]
+        pose = Pose(Vector3r(x, y, z), to_quaternion(pitch, roll, yaw))
+        self.__home_pose = pose
+        self.pose = pose        
+        
+        
+    @property
+    def altitude(self):
+        return -1*self.pose.position.z_val
             
     ##Functions
+    def go_home(self):
+        self.simSetVehiclePose(self.__home_pose, True)
+        # self.set_pose([0,0,0], [0,0,0])
+        # self.set_pose([0,0,0], [0,0,0], vehicle_name='Shadow')
+        self.simSetVehiclePose(self.__home_pose, True, vehicle_name='Shadow')
+        # self.pose = Pose(Vector3r(0,0,0), Quaternionr(0,0,0))
+        
+    def set_home(self, position : list, orientation : list):
+        x, y, z = position
+        roll, pitch, yaw = orientation
+        self.home_pose = Pose(Vector3r(x, y, z), to_quaternion(pitch, roll, yaw))
+        
+        
     def _pose(self, airsim_pose : Pose):
         next_position = self.pose.position + airsim_pose.position
         next_orientation = self.pose.orientation * airsim_pose.orientation
         self.pose.position = next_position
         self.pose.orientation = next_orientation
-        self.simSetVehiclePose(Pose(next_position, next_orientation), True)
+        # self.set_kinematics(next_position, next_orientation)
+        # self.set_kinematics(next_position, next_orientation, vehicle_name='Shadow')
         
+        self.simSetVehiclePose(Pose(next_position, next_orientation), True)
+        # print(self.simGetGroundTruthKinematics().position)
+        # print(self.get_pose(''))
+        self.simSetVehiclePose(Pose(next_position, next_orientation), True, vehicle_name='Shadow')
+        # print(self.simGetGroundTruthKinematics(vehicle_name='Shadow').position)
+        
+        # print(self.get_pose('Shadow'))
         return True
+    
+    def _gimbal(self, gimbal_pitch):
+        action_pitch = to_quaternion(np.deg2rad(gimbal_pitch), 0, 0)
+        rotation = self.gimbal_orientation * action_pitch
+        self.gimbal_orientation = rotation
+        pose = Pose(Vector3r(0.9,0,0.3), self.gimbal_orientation)
+        self.simSetCameraPose('stereo', pose, 'Hydrone')
+        self.simSetCameraPose('shadow', pose, 'Shadow')
+        
+        # self.pgimbal(vehicle_name='Hydrone', camera_name='stereo')
+        # self.pgimbal(vehicle_name='Shadow', camera_name='shadow')
+        # self.pegimbal(0, gimbal_pitch, 0)
+        # self.pegimbal(0, gimbal_pitch, 0, vehicle_name='Shadow', camera_name='shadow')
         
     def moveon(self, action : NDArray) -> bool:
         px, py, pz, yaw, gimbal_pitch= action
@@ -476,8 +578,7 @@ class ActPosition(RotorPyROS):
         action_pose = Pose(Vector3r(px, py, pz), to_quaternion(0,0,yaw))
         self._pose(action_pose)
         
-        action_pitch = to_quaternion(gimbal_pitch, 0, 0)
-        self.gimbal(action_pitch)
+        self._gimbal(gimbal_pitch)
         
         return True
         
