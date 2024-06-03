@@ -5,11 +5,33 @@ import sys
 import os
 import inspect
 import types
+import random
 import re
 import logging
 
 from .types import *
 
+
+def theta(point2d : list, target_point2d : list):
+    vx, vy, = point2d
+    tx, ty = target_point2d
+    heading = np.arctan2(ty - vy, tx - vx)
+    
+    if heading > math.pi:
+        heading -= 2 * math.pi
+
+    elif heading < -math.pi:
+        heading += 2 * math.pi
+    return heading
+
+def normalize_value(x, min_val, max_val, a, b):
+    return ((x - min_val) / (max_val - min_val)) * (b - a) + a
+
+def random_choice(min_range, max_range):
+    random.seed()
+    a, b = min_range
+    c, d = max_range
+    return random.uniform(a, b) if random.choice([True, False]) else random.uniform(c, d)
 
 def string_to_uint8_array(bstr):
     return np.fromstring(bstr, np.uint8)

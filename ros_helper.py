@@ -1,4 +1,5 @@
 import rospy
+import copy
 import cv2
 import message_filters
 import os
@@ -11,161 +12,18 @@ from numpy.typing import NDArray
 from typing import List
 
 from airsim_base.client import MultirotorClient
-from airsim_base.types import Vector3r, Quaternionr, Pose, KinematicsState
-from airsim_base.utils import to_quaternion, to_eularian_angles
+from airsim_base.types import Vector3r, Quaternionr, Pose, ImageType
+from airsim_base.utils import to_quaternion, to_eularian_angles, random_choice, theta
 
 
 from sensor_msgs.msg import Image
 from cv_bridge import CvBridge, CvBridgeError
-from geometry_msgs.msg import Quaternion, TransformStamped
+from geometry_msgs.msg import TransformStamped
 
-from airsim_ros_pkgs.msg import VelCmd, GimbalAngleQuatCmd, GimbalAngleEulerCmd
+from airsim_ros_pkgs.msg import GimbalAngleEulerCmd
 from airsim_ros_pkgs.srv import Takeoff, Land
 
 from cv_bridge import CvBridge, CvBridgeError
-
-
-class RotorROS(MultirotorClient):       
-         
-    @staticmethod
-    def image_transport(img_msg):
-        try:
-            return CvBridge().imgmsg_to_cv2(img_msg, "passthrough")
-
-        except CvBridgeError as e:
-            rospy.logerr("CvBridge Error: {0}".format(e))
-    
-    @staticmethod
-    def rcv_image(cv_img : NDArray, dw : int, dh : int):
-        return cv2.resize(cv_img.copy(), (dw, dh), interpolation = cv2.INTER_AREA)
-    
-    @staticmethod
-    def tf_to_list(tf : TransformStamped):
-        x, y, z = tf.transform.translation.x, tf.transform.translation.y, tf.transform.translation.z
-        qx, qy, qz, qw = tf.transform.rotation.x, tf.transform.rotation.y, tf.transform.rotation.z, tf.transform.rotation.w
-        return [x, y, z, qx, qy, qz, qw]
-        
-    def __init__(self,
-                  ip : str, 
-                  vehicle_name : str, 
-                  camera_name : str, 
-                  observation_type : str):
-        
-        MultirotorClient.__init__(self, ip)
-        
-        rgb_sub = message_filters.Subscriber("/airsim_node/"+vehicle_name+"/stereo/Scene", Image)
-        depth_sub = message_filters.Subscriber("/airsim_node/"+vehicle_name+"/stereo/DepthPlanar", Image)
-        tf_cam_sub = message_filters.Subscriber("/airsim_node/"+vehicle_name+"/"+camera_name+"/tf", TransformStamped)
-        
-        ts = message_filters.ApproximateTimeSynchronizer([rgb_sub, depth_sub, tf_cam_sub], 10, 0.1, allow_headerless=True)
-        ts.registerCallback(self.callback_stereo)
-        
-        if observation_type == 'panoptic':
-            seg_sub = message_filters.Subscriber("/airsim_node/"+vehicle_name+"/stereo/Segmentation", Image)
-            ts = message_filters.ApproximateTimeSynchronizer([rgb_sub, depth_sub, seg_sub, tf_cam_sub], 10, 0.1, allow_headerless=True)
-            ts.registerCallback(self._callback_panoptic)
-            
-        
-        self.gimbal_pub = rospy.Publisher("/airsim_node/gimbal_angle_quat_cmd", \
-                                        GimbalAngleQuatCmd, queue_size=1)
-
-        self.confirmConnection()
-        self.enableApiControl(True)
-        self.armDisarm(True)
-
-        
-        self.__vehicle_name = vehicle_name
-        self.__camera_name = camera_name
-        self.__observation_type = observation_type
-
-        self.rgb = np.array([])
-        self.depth = np.array([])
-        self.segmentation = np.array([])
-        self.tf = None
-        self.gimbal_orientation = to_quaternion(0, 0, 0)
-        
-        self.pose = self.past_pose = self.simGetVehiclePose(vehicle_name)
-        
-        
-
-    @property
-    def vehicle_name(self):
-        return self.__vehicle_name
-    
-    @property
-    def camera_name(self):
-        return self.__camera_name
-    
-    @property
-    def observation_type(self):
-        return self.__observation_type
-                
-    # Callbacks      
-    def callback_stereo(self, rgb_data, depth_data, tf_data):
-        rospy.logwarn(tf_data)
-        self.rgb = self.image_transport(rgb_data)
-        self.depth = self.image_transport(depth_data)
-        self.tf = self.tf_to_list(tf_data)
-        
-    def _callback_panoptic(self, rgb_data, depth_data, segmentation_data, tf_data):
-        self.rgb = self.image_transport(rgb_data)
-        self.depth = self.image_transport(depth_data)
-        self.segmentation = self.image_transport(segmentation_data)
-        self.tf = self.tf_to_list(tf_data)
-        
-        
-    ## Services
-    def take_off(self, vehicle_name):
-        try:
-            service = rospy.ServiceProxy("/airsim_node/"+vehicle_name+"/takeoff", Takeoff)
-            rospy.wait_for_service("/airsim_node/"+vehicle_name+"/takeoff")
-
-            service()
-
-        except rospy.ServiceException as e:
-            print ('Service call failed: %s' % e)
-
-    def land(self, vehicle_name):
-        try:
-            service = rospy.ServiceProxy("/airsim_node/"+vehicle_name+"/land", Land)
-            rospy.wait_for_service("/airsim_node/"+vehicle_name+"/land")
-
-            service()
-
-        except rospy.ServiceException as e:
-            print ('Service call failed: %s' % e)
-            
-    ##Functions        
-    def get_views(self) -> List[NDArray]:
-        return [self.rgb, self.depth] if self.__observation_type == "stereo" else [self.rgb, self.depth, self.segmentation]
-        
-    def get_observation(self) -> NDArray:
-        # w, h = self.__resize_img
-        # rgb = self.rcv_image(self.rgb, w, h)
-        # depth = self.rcv_image(self.depth, w, h)
-        obs = {'rgb' : self.rgb, 'depth' : self.depth, 'tf' : self.tf}
-        # print(self.tf)
-        if self.__observation_type == 'panoptic':
-            # segmentation = self.rcv_image(self.segmentation, w, h)
-            obs == {'rgb' : self.rgb, 'depth' : self.depth, 'segmentation' : self.segmentation, 'tf' : self.tf}
-        
-        return obs
-    
-    def gimbal(self, airsim_quaternion : Quaternionr):
-        rotation = self.gimbal_orientation * airsim_quaternion
-        self.gimbal_orientation = rotation
-        quaternion = Quaternion()
-        quaternion.x = self.gimbal_orientation.x_val
-        quaternion.y = self.gimbal_orientation.y_val
-        quaternion.z = self.gimbal_orientation.z_val
-        quaternion.w = self.gimbal_orientation.w_val
-
-        gimbal = GimbalAngleQuatCmd()
-        gimbal.camera_name = self.camera_name
-        gimbal.vehicle_name = self.vehicle_name
-        gimbal.orientation = quaternion
-
-        self.gimbal_pub.publish(gimbal)
 
 
 class RotorPyROS(MultirotorClient):       
@@ -179,107 +37,88 @@ class RotorPyROS(MultirotorClient):
             rospy.logerr("CvBridge Error: {0}".format(e))
     
     @staticmethod
-    def rcv_image(cv_img : NDArray, dw : int, dh : int):
-        return cv2.resize(cv_img.copy(), (dw, dh), interpolation = cv2.INTER_AREA)
+    def o3d_intrinsic_matrix(image_dim : tuple, camera_fov : float):
+        intrinsic = o3d.camera.PinholeCameraIntrinsic()
+        image_width, image_height = image_dim
+        fov_rad = camera_fov * np.pi/180
+        fd = (image_width/2.0) / np.tan(fov_rad/2.0)
+        intrinsic.set_intrinsics(image_width, image_height, fd, fd, image_width/2 - 0.5, image_height/2 - 0.5)
+        
+        return intrinsic
     
     @staticmethod
     def tf_to_list(tf : TransformStamped):
         x, y, z = tf.transform.translation.x, tf.transform.translation.y, tf.transform.translation.z
         qx, qy, qz, qw = tf.transform.rotation.x, tf.transform.rotation.y, tf.transform.rotation.z, tf.transform.rotation.w
         return np.array([x, y, z, qx, qy, qz, qw])
+    
+    @staticmethod
+    def vector3_from_list(v : list):
+        x, y, z = v
+        return Vector3r(x, y, z)
+    
+    @staticmethod
+    def quaternionr_from_list(q : list):
+        x, y, z, w = q
+        return Quaternionr(x, y, z, w)
+    
+    @staticmethod
+    def pose_from_positon_euler_list(pose : list):
+        x, y, z, roll, pitch, yaw= pose
+        return Pose(Vector3r(x, y, z,), to_quaternion(roll, pitch, yaw))
+    
+    @staticmethod
+    def pose_from_positon_quat_list(pose : list):
+        x, y, z, qx, qy, qz, qw = pose
+        return Pose(Vector3r(x, y, z,), Quaternionr(qx, qy, qz, qw))
+    
+    @staticmethod
+    def pose_to_list(pose : Pose):
+        position = pose.position.to_numpy_array().tolist()
+        orientation = pose.orientation.to_numpy_array().tolist()
+        return position+orientation
+    
+    @staticmethod
+    def pose_to_position_quat(pose : Pose):
+        position = pose.position.to_numpy_array().tolist()
+        orientation = pose.orientation.to_numpy_array().tolist()
+        return position, orientation
+    
+    @staticmethod
+    def pose_to_position_euler(pose : Pose):
+        position = pose.position.to_numpy_array().tolist()
+        orientation = list(to_eularian_angles(pose.orientation))
+        return position, orientation
         
     def __init__(self,
-                  ip : str, 
-                  vehicle_name : str, 
-                  camera_name : str,
+                  ip : str,
                   image_dim : tuple,
-                  camera_fov : float,
-                  global_pose : list, 
-                  start_pose : list,
-                  observation_type : str):
+                  camera_fov : float):
         
-        MultirotorClient.__init__(self, ip)            
-        
-        self.gimbal_pub = rospy.Publisher("/airsim_node/gimbal_angle_quat_cmd", \
-                                        GimbalAngleQuatCmd, queue_size=2)
-        self.gimbal2_pub = rospy.Publisher("/airsim_node/gimbal_angle_euler_cmd", \
-                                        GimbalAngleEulerCmd, queue_size=1)
+        MultirotorClient.__init__(self, ip)         
 
         self.confirmConnection()
-        self.enableApiControl(True)
-        self.armDisarm(True)
 
+        self.__intrinsic = self.o3d_intrinsic_matrix(image_dim, camera_fov)
+        self.__gimbal = to_quaternion(0,0,0)
+        self.__gimbal_pub = rospy.Publisher("/airsim_node/gimbal_angle_euler_cmd", \
+                                        GimbalAngleEulerCmd, queue_size=1)
         
-        self.__vehicle_name = vehicle_name
-        self.__camera_name = camera_name
-        self.__observation_type = observation_type
-        self.__intrinsic = o3d.camera.PinholeCameraIntrinsic()
         
-        image_width, image_height = image_dim
-        fov_rad = camera_fov * np.pi/180
-        fd = (image_width/2.0) / np.tan(fov_rad/2.0)
-        self.__intrinsic.set_intrinsics(image_width, image_height, fd, fd, image_width/2 - 0.5, image_height/2 - 0.5)
-       
-        x, y, z, roll, pitch, yaw = global_pose
-        self.global_pose = Pose(Vector3r(x, y, z), to_quaternion(pitch, roll, yaw))
-        x, y, z, roll, pitch, yaw = start_pose
-        self.start_pose = Pose(Vector3r(x, y, z), to_quaternion(pitch, roll, yaw))
-        self.pose = self.simGetVehiclePose(vehicle_name)
 
-        self.gimbal_orientation = to_quaternion(pitch, 0, 0)
-        
     @property
-    def vehicle_name(self):
-        return self.__vehicle_name
+    def gimbal(self):
+        return self.__gimbal
     
-    @property
-    def camera_name(self):
-        return self.__camera_name
-    
-    @property
-    def observation_type(self):
-        return self.__observation_type
-    
-    @property
-    def intrinsic(self):
-        return self.__intrinsic
-    
-    @property
-    def tf_info(self):
-        return self._tf()
-    
-    @property
-    def rgb(self):
-        return {'rgb' : self._rgb(), 'tf' : self._tf()}
-        
-    @property
-    def stereo(self):
-        return {'rgb' : self._rgb(), 'depth' : self._depth(), 'tf' : self._tf()}
-    
-    @property
-    def panoptic(self):
-        return {'rgb' : self._rgb(), 'depth' : self._depth(), 'segmentation' : self._segmentation(), 'tf' : self._tf()}
-    
-    @property
-    def stereo_occupancy(self):
-        rgb = self._rgb()
-        depth = self._depth()
-        pcd = self._point_cloud(rgb[...,::-1].copy(), depth.astype(np.float32))
-        
-        return {'rgb' : rgb, 'depth' : depth, 'point_cloud' : pcd, 'tf' : self._tf()}
-    
-    @property
-    def panoptic_occupancy(self):
-        rgb = self._rgb()
-        depth = self._depth()
-        pcd = self._point_cloud(rgb[...,::-1].copy(), depth.astype(np.float32))
-        
-        return {'rgb' : rgb, 'depth' : depth, 'segmentation' : self._segmentation(), 'point_cloud' : pcd, 'tf' : self._tf()}
+    @gimbal.setter
+    def gimbal(self, angles : list):
+        roll, pitch, yaw = angles
+        q = to_quaternion(roll=roll, pitch=pitch, yaw=yaw)
+        self.__gimbal *= q
     
     
     ## Services
     def take_off(self, vehicle_name : str = '', flag : bool = False):
-        vehicle_name = vehicle_name or self.__vehicle_name
         try:
             service = rospy.ServiceProxy("/airsim_node/"+vehicle_name+"/takeoff", Takeoff)
             rospy.wait_for_service("/airsim_node/"+vehicle_name+"/takeoff")
@@ -290,7 +129,6 @@ class RotorPyROS(MultirotorClient):
             print ('Service call failed: %s' % e)
 
     def land(self, vehicle_name : str = ''):
-        vehicle_name = vehicle_name or self.__vehicle_name
         try:
             service = rospy.ServiceProxy("/airsim_node/"+vehicle_name+"/land", Land)
             rospy.wait_for_service("/airsim_node/"+vehicle_name+"/land")
@@ -299,14 +137,9 @@ class RotorPyROS(MultirotorClient):
 
         except rospy.ServiceException as e:
             print ('Service call failed: %s' % e)
-
     
-    
-
     ##Functions        
-    def _rgb(self, vehicle_name : str ='', camera_name : str =''):
-        vehicle_name = vehicle_name or self.__vehicle_name
-        camera_name = camera_name or self.__camera_name
+    def rgb_image(self, vehicle_name : str ='', camera_name : str =''):
         image_data = None
         cv_image = None
         while image_data is None :
@@ -319,9 +152,7 @@ class RotorPyROS(MultirotorClient):
         return cv_image
     
             
-    def _depth(self, vehicle_name : str ='', camera_name : str =''):
-        vehicle_name = vehicle_name or self.__vehicle_name
-        camera_name = camera_name or self.__camera_name
+    def depth_image(self, vehicle_name : str ='', camera_name : str =''):
         image_data = None
         cv_image = None
         while image_data is None :
@@ -334,9 +165,7 @@ class RotorPyROS(MultirotorClient):
         return cv_image
     
     
-    def _segmentation(self, vehicle_name : str ='', camera_name : str =''):
-        vehicle_name = vehicle_name or self.__vehicle_name
-        camera_name = camera_name or self.__camera_name
+    def segmentation_image(self, vehicle_name : str ='', camera_name : str =''):
         image_data = None
         cv_image = None
         while image_data is None :
@@ -348,7 +177,7 @@ class RotorPyROS(MultirotorClient):
 
         return cv_image
     
-    def _rgbd(self, image : NDArray, depth : NDArray):
+    def rgbd_image(self, image : NDArray, depth : NDArray):
         o3d_image = o3d.geometry.Image(image)
         o3d_depth = o3d.geometry.Image(depth)
         rgbd = o3d.geometry.RGBDImage.create_from_color_and_depth(o3d_image, 
@@ -359,13 +188,11 @@ class RotorPyROS(MultirotorClient):
             
         return rgbd
     
-    def _point_cloud(self, image : NDArray, depth : NDArray):
+    def point_cloud(self, image : NDArray, depth : NDArray):
         rgbd = self._rgbd(image, depth)
         return o3d.geometry.PointCloud.create_from_rgbd_image(rgbd, self.__intrinsic)
     
-    def _tf(self, vehicle_name : str ='', camera_name : str =''):
-        vehicle_name = vehicle_name or self.__vehicle_name
-        camera_name = camera_name or self.__camera_name
+    def tf(self, vehicle_name : str ='', camera_name : str =''):
         tf_data = None
         tf_ = None
         while tf_data is None :
@@ -377,285 +204,247 @@ class RotorPyROS(MultirotorClient):
 
         return tf_
     
-    def objectp2list(self, object_name: str):
-        obj_pose = self.simGetObjectPose(object_name)
+    
+    def get_object_pose(self, object_name: str):
+        return self.simGetObjectPose(object_name)
+    
+    def get_object_pose_as_list(self, object_name: str):
+        obj_pose = self.get_object_pose(object_name)
         
         position = list(obj_pose.position.to_numpy_array())
         orientation = list(to_eularian_angles(obj_pose.orientation))
         return position + orientation
-        
-    def get_views(self) -> List[NDArray]:
-        return [self.rgb, self.depth] if self.__observation_type == "stereo" else [self.rgb, self.depth, self.segmentation]
-        
-    def get_observation(self) -> NDArray:
-        return self.__getattribute__(self.__observation_type)
     
-    def pgimbal(self, vehicle_name : str ='', camera_name : str =''):
-        quaternion = Quaternion()
-        quaternion.x = self.gimbal_orientation.x_val
-        quaternion.y = self.gimbal_orientation.y_val
-        quaternion.z = self.gimbal_orientation.z_val
-        quaternion.w = self.gimbal_orientation.w_val
-
-        gimbal = GimbalAngleQuatCmd()
-        gimbal.vehicle_name = vehicle_name
-        gimbal.camera_name = camera_name
-        gimbal.orientation = quaternion
-
-        self.gimbal_pub.publish(gimbal)
-        # rospy.Rate(0.1).sleep()
-        return True
-    
-    def pegimbal(self, roll, pitch, yaw, vehicle_name : str ='', camera_name : str =''):
-        euler = GimbalAngleEulerCmd()
-        euler.vehicle_name = vehicle_name
-        euler.camera_name = camera_name
-        euler.roll = roll
-        euler.pitch = pitch
-        euler.yaw = yaw
-        self.gimbal2_pub.publish(euler)
-    
-    def gimbal(self, airsim_quaternion : Quaternionr, vehicle_name : str ='', camera_name : str =''):
-        vehicle_name = vehicle_name or self.__vehicle_name
-        camera_name = camera_name or self.__camera_name
-        
-        
-        rotation = self.gimbal_orientation * airsim_quaternion
-        self.gimbal_orientation = rotation
-        self.pgimbal(vehicle_name, camera_name)
-        
-        return True
-    
-    def get_start_pose(self):
-        position = self.start_pose.position.to_numpy_array().tolist()
-        orientation = self.start_pose.orientation.to_numpy_array().tolist()
-        return position, orientation
-    
-    @singledispatchmethod
-    def get_pose(self, euler : bool, vehicle_name : str):
+    def get_pose(self, vehicle_name : str = ''):
         pose = self.simGetVehiclePose(vehicle_name)
-        position = pose.position.to_numpy_array().tolist()
-        orientation = list(to_eularian_angles(pose.orientation)) if euler else pose.orientation.to_numpy_array().tolist()
-        return position, orientation
-
-    @get_pose.register
-    def _(self, vehicle_name : str):
-        pose = self.simGetVehiclePose(vehicle_name)
-        return pose
+        return self.pose_to_position_quat(pose)
+        
+    def set_gimbal(self, roll : float, pitch : float, yaw : float, vehicle_name : str ='', camera_name : str =''):
+        gimbal_msg = GimbalAngleEulerCmd()
+        gimbal_msg.vehicle_name = vehicle_name
+        gimbal_msg.camera_name = camera_name
+        gimbal_msg.roll = roll
+        gimbal_msg.pitch = pitch
+        gimbal_msg.yaw = yaw
+        self.__gimbal_pub.publish(gimbal_msg)
     
-    def set_kinematics(self,    
-                       position : Vector3r, 
-                       orientation : Quaternionr, 
-                       linear_velocity : Vector3r = Vector3r(0,0,0), 
-                       angular_velocity : Vector3r = Vector3r(0,0,0), 
-                       linear_acceleration : Vector3r = Vector3r(0,0,0),
-                       angular_acceleration : Vector3r = Vector3r(0,0,0),
-                       vehicle_name : str = ''):
-        
-        k = KinematicsState()
-        k.position = position
-        k.orientation = orientation
-        k.linear_velocity = linear_velocity
-        k.angular_velocity = angular_velocity
-        k.linear_acceleration = linear_acceleration
-        k.angular_acceleration = angular_acceleration
-        
-        self.simSetKinematics(k, True, vehicle_name)
-        
-    def set_start_pose(self, position : list = [], orientation: list = [], vehicle_name : str = ''):
-        if position and orientation:
-            x, y, z = position
-            roll, pitch, yaw = orientation
-            start_pose = Pose(Vector3r(x, y, z), to_quaternion(pitch, roll, yaw))
-            self.start_pose = start_pose
-        
-        self.simSetVehiclePose(self.start_pose, ignore_collision=True, vehicle_name=vehicle_name)
+    def set_object_pose(self, pose : list, object_name : str = ''):
+        x, y, z, roll, pitch, yaw = pose
+        start_pose = Pose(Vector3r(x, y, z), to_quaternion(pitch, roll, yaw))
+        self.simSetObjectPose(object_name, start_pose)
         
         return True
     
-    def set_pose(self, position : list, orientation: list, vehicle_name : str = ''):
-        x, y, z = position
-        roll, pitch, yaw = orientation
+    def set_pose(self, pose: list, vehicle_name : str = ''):
+        x, y, z, roll, pitch, yaw = pose
         start_pose = Pose(Vector3r(x, y, z), to_quaternion(pitch, roll, yaw))
         
         self.simSetVehiclePose(start_pose, ignore_collision=True, vehicle_name=vehicle_name)
         return True
     
-    def set_object_pose(self, position : list, orientation: list, object_name : str = ''):
-        # print(position, orientation, object_name)
-        past_pose = self.simGetObjectPose(object_name)
-        x, y, z = position
-        roll, pitch, yaw = orientation
-        start_pose = Pose(Vector3r(x, y, z), to_quaternion(pitch, roll, yaw))
-        self.simSetObjectPose(object_name, start_pose)
-        current_pose = self.simGetObjectPose(object_name)
+    def start(self, vehicle_name : str = ''):
+        self.enableApiControl(True, vehicle_name)
+        self.armDisarm(True, vehicle_name)
         
-        return past_pose, current_pose
+    
+    
+    
+class DualActPose(RotorPyROS):
+    def __init__(self, ip: str, vehicle_cfg : dict, shadow_cfg : dict, observation_type : str):        
+        super().__init__(ip, vehicle_cfg['camera']['dim'], vehicle_cfg['camera']['fov'])
         
-   
+        self.__vehicle_cfg = vehicle_cfg
+        self.__shadow_cfg = shadow_cfg
+        self.__obs_type = observation_type
+        self.__home = self.pose_from_positon_euler_list(vehicle_cfg['start_pose'])
+        self.__dual_pose = self.pose_from_positon_euler_list(shadow_cfg['start_pose'])
         
-class ActPosition(RotorPyROS):
-    def __init__(self,
-                  ip : str, 
-                  vehicle_name : str, 
-                  camera_name : str,
-                  image_dim : tuple,
-                  camera_fov : float,
-                  global_pose : list, 
-                  start_pose : list,
-                  observation_type : str):
-        
-        super().__init__(ip, vehicle_name, camera_name, image_dim, camera_fov, global_pose, start_pose, observation_type)
-        
-        self.__home_pose = Pose()    
+        self._start()
         
     @property
-    def home_pose(self):
-        position = self.__home_pose.position.to_numpy_array().tolist()
-        orientation = list(to_eularian_angles(self.__home_pose.orientation))
-        return position, orientation
+    def home(self):
+        return self.pose_to_position_quat(self.__home)
     
-    @home_pose.setter
-    def home_pose(self, pose):
-        x, y, z = pose[:3]
-        roll, pitch, yaw = pose[3:]
-        pose = Pose(Vector3r(x, y, z), to_quaternion(pitch, roll, yaw))
-        self.__home_pose = pose
-        self.pose = pose        
-        
-        
+    @home.setter
+    def home(self, new_pose : list):
+        pose = self.pose_from_positon_euler_list(new_pose)
+        self.__home = copy.deepcopy(pose)
+        self.__dual_pose = copy.deepcopy(pose)   
+    
     @property
     def altitude(self):
-        return -1*self.pose.position.z_val
-            
-    ##Functions
-    def go_home(self):
-        self.simSetVehiclePose(self.__home_pose, True)
-        # self.set_pose([0,0,0], [0,0,0])
-        # self.set_pose([0,0,0], [0,0,0], vehicle_name='Shadow')
-        self.simSetVehiclePose(self.__home_pose, True, vehicle_name='Shadow')
-        # self.pose = Pose(Vector3r(0,0,0), Quaternionr(0,0,0))
+        return -1 * self.__dual_pose.position.z_val
+    
+    @property
+    def altitude_min(self):
+        altitude = self.__vehicle_cfg['altitude'] 
+        altitude_min = altitude if type(altitude) == float else altitude[0]
+        return altitude_min
+    
+    @property
+    def altitude_max(self):
+        return self.__vehicle_cfg['altitude'][1] 
+    
+    @property
+    def rgb(self):
+        vehicle_name = self.__vehicle_cfg['name']
+        camera_name = self.__vehicle_cfg['camera']['name']
+        return {'rgb' : self.rgb_image(vehicle_name, camera_name), 'tf' : self.tf(vehicle_name, camera_name)}
         
-    def set_home(self, position : list, orientation : list):
-        x, y, z = position
-        roll, pitch, yaw = orientation
-        self.home_pose = Pose(Vector3r(x, y, z), to_quaternion(pitch, roll, yaw))
+    @property
+    def stereo(self):
+        vehicle_name = self.__vehicle_cfg['name']
+        camera_name = self.__vehicle_cfg['camera']['name']
+        return {'rgb' : self.rgb_image(vehicle_name, camera_name), 
+                'depth' : self.depth_image(vehicle_name, camera_name), 
+                'tf' : self.tf(vehicle_name, camera_name)}
+    
+    @property
+    def panoptic(self):
+        vehicle_name = self.__vehicle_cfg['name']
+        camera_name = self.__vehicle_cfg['camera']['name']
+        return {'rgb' : self.rgb_image(vehicle_name, camera_name), 
+                'depth' : self.depth_image(vehicle_name, camera_name), 
+                'segmentation' : self.segmentation_image(vehicle_name, camera_name), 
+                'tf' : self.tf(vehicle_name, camera_name)}
+    
+    @property
+    def stereo_occupancy(self):
+        vehicle_name = self.__vehicle_cfg['name']
+        camera_name = self.__vehicle_cfg['camera']['name']
+        rgb = self.rgb_image(vehicle_name, camera_name)
+        depth = self.depth_image(vehicle_name, camera_name)
+        pcd = self.point_cloud(rgb[...,::-1].copy(), depth.astype(np.float32))
         
+        return {'rgb' : rgb, 'depth' : depth, 'point_cloud' : pcd, 'tf' : self.tf(vehicle_name, camera_name)}
+    
+    @property
+    def panoptic_occupancy(self):
+        vehicle_name = self.__vehicle_cfg['name']
+        camera_name = self.__vehicle_cfg['camera']['name']
+        rgb = self.rgb_image(vehicle_name, camera_name)
+        depth = self.depth_image(vehicle_name, camera_name)
+        pcd = self.point_cloud(rgb[...,::-1].copy(), depth.astype(np.float32))
         
-    def _pose(self, airsim_pose : Pose):
-        next_position = self.pose.position + airsim_pose.position
-        next_orientation = self.pose.orientation * airsim_pose.orientation
-        self.pose.position = next_position
-        self.pose.orientation = next_orientation
-        # self.set_kinematics(next_position, next_orientation)
-        # self.set_kinematics(next_position, next_orientation, vehicle_name='Shadow')
+        return {'rgb' : rgb, 
+                'depth' : depth, 
+                'segmentation' : self.segmentation_image(vehicle_name, camera_name), 
+                'point_cloud' : pcd, 
+                'tf' : self.tf(vehicle_name, camera_name)}
+    
+    @property
+    def observation(self) -> NDArray:
+        return self.__getattribute__(self.__obs_type)
+    
+    
+    def _start(self):
+        self.start(self.__vehicle_cfg['name'])
+        self.start(self.__shadow_cfg['name'])
         
-        self.simSetVehiclePose(Pose(next_position, next_orientation), True)
-        # print(self.simGetGroundTruthKinematics().position)
-        # print(self.get_pose(''))
-        self.simSetVehiclePose(Pose(next_position, next_orientation), True, vehicle_name='Shadow')
-        # print(self.simGetGroundTruthKinematics(vehicle_name='Shadow').position)
+        self.simSetDetectionFilterRadius(self.__shadow_cfg['camera']['name'], 
+                                                 ImageType.Scene, 200 * 100, 
+                                                 vehicle_name=self.__shadow_cfg['name'])
         
-        # print(self.get_pose('Shadow'))
+    def _gimbal(self, pitch : float):
+        self.gimbal = [0,np.deg2rad(pitch),0]
+        pose = Pose(Vector3r(0.9,0,0.3), self.gimbal)
+        self.simSetCameraPose(self.__vehicle_cfg['camera']['name'], pose, self.__vehicle_cfg['name'])
+        self.simSetCameraPose(self.__shadow_cfg['camera']['name'], pose, self.__shadow_cfg['name'])
+        
+        return True
+        
+    def _pose(self, new_pose : list):
+        pose = self.pose_from_positon_euler_list(new_pose)
+        self.__dual_pose.position += pose.position
+        self.__dual_pose.orientation *= pose.orientation
+        
+        self.simSetVehiclePose(self.__dual_pose, True)
+        self.simSetVehiclePose(self.__dual_pose, True, vehicle_name=self.__shadow_cfg['name'])
+        
         return True
     
-    def _gimbal(self, gimbal_pitch):
-        action_pitch = to_quaternion(np.deg2rad(gimbal_pitch), 0, 0)
-        rotation = self.gimbal_orientation * action_pitch
-        self.gimbal_orientation = rotation
-        pose = Pose(Vector3r(0.9,0,0.3), self.gimbal_orientation)
-        self.simSetCameraPose('stereo', pose, 'Hydrone')
-        self.simSetCameraPose('shadow', pose, 'Shadow')
+    def go_home(self):
+        self.simSetVehiclePose(self.__home, True)
+        self.simSetVehiclePose(self.__home, True, vehicle_name=self.__shadow_cfg['name'])
+        self.__dual_pose = copy.deepcopy(self.__home)
+        return True
         
-        # self.pgimbal(vehicle_name='Hydrone', camera_name='stereo')
-        # self.pgimbal(vehicle_name='Shadow', camera_name='shadow')
-        # self.pegimbal(0, gimbal_pitch, 0)
-        # self.pegimbal(0, gimbal_pitch, 0, vehicle_name='Shadow', camera_name='shadow')
+    def next_point_of_view(self, five_DoF : NDArray):
+        px, py, pz, yaw, gimbal_pitch= five_DoF
         
-    def moveon(self, action : NDArray) -> bool:
-        px, py, pz, yaw, gimbal_pitch= action
-
-        action_pose = Pose(Vector3r(px, py, pz), to_quaternion(0,0,yaw))
-        self._pose(action_pose)
-        
+        self._pose([px, py, pz, 0, 0, yaw])
         self._gimbal(gimbal_pitch)
         
         return True
+    
+    def set_detection(self, detect : str):
+        self.simAddDetectionFilterMeshName(self.__shadow_cfg['camera']['name'], 
+                                              ImageType.Scene, f"{detect}*", 
+                                              vehicle_name=self.__shadow_cfg['name'])
         
+    def detection_distance(self):
+        wx, wy, wz, _, _, _ = self.__shadow_cfg['global_pose']
+        position, _ = self.__dual_pose
+        rx, ry, rz = position
+        x, y, z = wx + rx, wy + ry, wz + rz
         
+        return np.sqrt(x**2 + y**2 + z**2)
         
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-# class Trajectory(QuarotorROS):
-#     def __init__(self,
-#                   ip : str, 
-#                   vehicle_name : str, 
-#                   camera_name : str, 
-#                   observation_type : str,
-#                   resize_img : Tuple):
+    def detections(self):
+        return self.simGetDetectedMeshesDistances(self.__shadow_cfg['camera']['name'], 
+                                                                           ImageType.Scene,
+                                                                           vehicle_name=self.__shadow_cfg['name'])
         
-#         super().__init__(ip, vehicle_name, camera_name, observation_type, resize_img)
+    def random_pose(self, range_x : dict, range_y : dict, safe_range_x : dict, safe_range_y : dict, target : str):
+        xmin, xmax = range_x
+        ymin, ymax = range_y
+        
+        sxmin, sxmax = safe_range_x
+        symin, symax = safe_range_y
+        
+        px = random_choice((xmin - sxmin, sxmin), (sxmax, sxmax + xmax))
+        py = random_choice((ymin - symin, symin), (symax, symax + ymax))
+        
+        centroide_pose = self.get_object_pose_as_list(target)
+        yaw = theta([px, py], centroide_pose[:2])
+        pose = [px, py, self.__home.position.z_val, 0, 0, yaw]
 
-#         self.velocity_pub = rospy.Publisher("/airsim_node/"+vehicle_name+"/vel_cmd_body_frame", \
-#                                         VelCmd, queue_size=1)
+        self._pose(pose)
         
-#     ##Functions
-#     def _velocity(self, linear_x : float, linear_y : float, linear_z : float, angular_z : float):
-        
-#         vel = VelCmd()
-#         vel.twist.linear.x = linear_x
-#         vel.twist.linear.y = linear_y
-#         vel.twist.linear.z = linear_z
-#         vel.twist.angular.x = 0
-#         vel.twist.angular.y = 0
-#         vel.twist.angular.z = angular_z
-        
-#         self.velocity_pub.publish(vel)
-        
-#     def get_state(self, action : NDArray) -> Tuple[NDArray, bool]:
-#         linear_x, linear_y, linear_z, angular_z, gimbal_pitch = action
-        
-#         vx = np.clip(linear_x, -10, 10)
-#         vy = np.clip(linear_y, -10, 10)
-#         vz = np.clip(linear_z, -10, 10)
-        
-#         omegaz = np.clip(angular_z, -5, 5)
+        return pose
 
-#         pitch = np.clip(gimbal_pitch, -45, 45)
-#         action_pitch = to_quaternion(pitch, 0, 0)
+    @singledispatchmethod    
+    def random_base_pose(self, range_x : dict, range_y : dict, safe_range_x : dict, safe_range_y : dict, target : str):
+        pov_pose = self.random_pose(range_x, range_y, safe_range_x, safe_range_y, target)  
+        position = pov_pose[:3]
+        orientation = pov_pose[3:]      
         
-#         self._velocity(vx, vy, vz, omegaz)
-#         self.gimbal(action_pitch)
-
-#         done = False # condition to finish
-#         if done:
-#             self.reset()
-#             return self.get_observation(), done
+        position[1] -= 13
+        position[2] = self.__vehicle_cfg['base']['altitude']
+        orientation[2:] = [np.deg2rad(-90), 0]
+        pose = position + orientation
+        self.set_object_pose(pose, self.__vehicle_cfg['base']['name'])
         
-#         done = False
-#         return self.get_observation(), done
+        np_position = np.array(self.__shadow_cfg['global_pose'][:3]) + np.array(position)
+        pose = np_position.tolist() + orientation
+        self.set_object_pose(pose, self.__shadow_cfg['base']['name'])
+        
+        return pov_pose
+    
+    @random_base_pose.register
+    def random_base_pose(self, pov_pose : list):
+        position = pov_pose[:3]
+        orientation = pov_pose[3:]      
+        
+        position[1] -= 13
+        position[2] = self.__vehicle_cfg['base']['altitude']
+        orientation = [0, np.deg2rad(-90), 0]
+        
+        pose = position + orientation
+        self.set_object_pose(pose, self.__vehicle_cfg['base']['name'])
+        
+        np_position = np.array(self.__shadow_cfg['global_pose'][:3]) + np.array(position)
+        pose = np_position.tolist() + orientation
+        self.set_object_pose(pose, self.__shadow_cfg['base']['name'])
+        
+        return pov_pose
