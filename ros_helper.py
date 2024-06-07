@@ -260,7 +260,11 @@ class DualActPose(RotorPyROS):
         self.__dual_pose = self.pose_from_positon_euler_list(shadow_cfg['start_pose'])
         
         self._start()
-        
+    
+    @property
+    def vehicle_and_camera_name(self):
+        return self.__vehicle_cfg['name'], self.__vehicle_cfg['camera']['name']   
+    
     @property
     def home(self):
         return self.pose_to_position_quat(self.__home)
