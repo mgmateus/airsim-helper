@@ -349,8 +349,8 @@ class DualActPose(RotorPyROS):
                                                  ImageType.Scene, 200 * 100, 
                                                  vehicle_name=self.__shadow_cfg['name'])
         
-    def _gimbal(self, pitch : float):
-        self.gimbal = [0,np.deg2rad(pitch),0]
+    def _gimbal(self, pitch : float, deg2rad : bool = True):
+        self.gimbal = [0, np.deg2rad(pitch), 0] if deg2rad else [0, pitch, 0]
         pose = Pose(Vector3r(0.9,0,0.3), self.gimbal)
         self.simSetCameraPose(self.__vehicle_cfg['camera']['name'], pose, self.__vehicle_cfg['name'])
         self.simSetCameraPose(self.__shadow_cfg['camera']['name'], pose, self.__shadow_cfg['name'])
@@ -368,6 +368,8 @@ class DualActPose(RotorPyROS):
         return True
     
     def go_home(self):
+        _, rpitch, _ = to_eularian_angles(self.gimbal)
+        self._gimbal(-rpitch)
         self.simSetVehiclePose(self.__home, True)
         self.simSetVehiclePose(self.__home, True, vehicle_name=self.__shadow_cfg['name'])
         self.__dual_pose = copy.deepcopy(self.__home)
