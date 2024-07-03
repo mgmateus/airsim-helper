@@ -294,7 +294,7 @@ class DualActPose(RotorPyROS):
         vehicle_name = self.__vehicle_cfg['name']
         camera_name = self.__vehicle_cfg['camera']['name']
         return {'rgb' : self.rgb_image(vehicle_name, camera_name), 'tf' : self.tf(vehicle_name, camera_name)}
-        
+    
     @property
     def stereo(self):
         vehicle_name = self.__vehicle_cfg['name']
@@ -321,6 +321,7 @@ class DualActPose(RotorPyROS):
         pcd = self.point_cloud(rgb[...,::-1].copy(), depth.astype(np.float32))
         
         return {'rgb' : rgb, 'depth' : depth, 'point_cloud' : pcd, 'tf' : self.tf(vehicle_name, camera_name)}
+    
     
     @property
     def panoptic_occupancy(self):
@@ -351,7 +352,7 @@ class DualActPose(RotorPyROS):
         
     def _gimbal(self, pitch : float, deg2rad : bool = True):
         self.gimbal = [0, np.deg2rad(pitch), 0] if deg2rad else [0, pitch, 0]
-        pose = Pose(Vector3r(0.9,0,0.3), self.gimbal)
+        pose = Pose(Vector3r(0.3,0,0.3), self.gimbal)
         self.simSetCameraPose(self.__vehicle_cfg['camera']['name'], pose, self.__vehicle_cfg['name'])
         self.simSetCameraPose(self.__shadow_cfg['camera']['name'], pose, self.__shadow_cfg['name'])
         
