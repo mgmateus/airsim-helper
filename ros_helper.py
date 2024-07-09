@@ -296,6 +296,20 @@ class DualActPose(RotorPyROS):
         return {'rgb' : self.rgb_image(vehicle_name, camera_name), 'tf' : self.tf(vehicle_name, camera_name)}
     
     @property
+    def depth(self):
+        vehicle_name = self.__vehicle_cfg['name']
+        camera_name = self.__vehicle_cfg['camera']['name']
+        return {'depth' : self.depth_image(vehicle_name, camera_name), 
+                'tf' : self.tf(vehicle_name, camera_name)}
+    
+    @property
+    def segmentation(self):
+        vehicle_name = self.__vehicle_cfg['name']
+        camera_name = self.__vehicle_cfg['camera']['name']
+        return {'segmentation' : self.segmentation_image(vehicle_name, camera_name), 
+                'tf' : self.tf(vehicle_name, camera_name)}
+    
+    @property
     def stereo(self):
         vehicle_name = self.__vehicle_cfg['name']
         camera_name = self.__vehicle_cfg['camera']['name']
