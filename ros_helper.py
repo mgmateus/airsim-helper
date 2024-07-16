@@ -15,6 +15,7 @@ from airsim_base.client import MultirotorClient
 from airsim_base.types import Vector3r, Quaternionr, Pose, ImageType
 from airsim_base.utils import to_quaternion, to_eularian_angles, random_choice, theta
 
+from .utils import dict_object
 
 from sensor_msgs.msg import Image
 from cv_bridge import CvBridge, CvBridgeError
@@ -246,81 +247,79 @@ class RotorPyROS(MultirotorClient):
         self.enableApiControl(True, vehicle_name)
         self.armDisarm(True, vehicle_name)
         
-    
-    
-    
-class DualActPose(RotorPyROS):
-    def __init__(self, ip: str, vehicle_cfg : dict, shadow_cfg : dict, observation_type : str):        
-        super().__init__(ip, vehicle_cfg['camera']['dim'], vehicle_cfg['camera']['fov'])
+
+class PointOfViewTwins(RotorPyROS):
+    def __init__(self, ip: str, vehicle_cfg : dict_object, twin_cfg : dict_object, observation_type : str):        
+        super().__init__(ip, vehicle_cfg.camera.dim, vehicle_cfg.camera.fov)
         
         self.__vehicle_cfg = vehicle_cfg
-        self.__shadow_cfg = shadow_cfg
+        self.__twin_cfg = twin_cfg
         self.__obs_type = observation_type
-        self.__home = self.pose_from_positon_euler_list(vehicle_cfg['start_pose'])
-        self.__dual_pose = self.pose_from_positon_euler_list(shadow_cfg['start_pose'])
+        self.__home = self.pose_from_positon_euler_list(vehicle_cfg.start_pose)
+        self.__twin_pose = self.pose_from_positon_euler_list(twin_cfg.start_pose)
         
         self._start()
-    
+            
     @property
     def vehicle_and_camera_name(self):
-        return self.__vehicle_cfg['name'], self.__vehicle_cfg['camera']['name']   
+        vehicle_name = self.__vehicle_cfg.name
+        camera_name = self.__vehicle_cfg.camera.name
+        return vehicle_name, camera_name
     
     @property
     def home(self):
-        return self.pose_to_position_quat(self.__home)
+        home = self.__home
+        return self.pose_to_position_quat(home)
     
     @home.setter
     def home(self, new_pose : list):
         pose = self.pose_from_positon_euler_list(new_pose)
         self.__home = copy.deepcopy(pose)
-        self.__dual_pose = copy.deepcopy(pose)   
+        self.__twin_pose = copy.deepcopy(pose)   
     
     @property
     def altitude(self):
-        return -1 * self.__dual_pose.position.z_val
+        altitude = self.__twin_pose.position.z_val
+        return -1 * altitude
     
     @property
     def altitude_min(self):
-        altitude = self.__vehicle_cfg['altitude'] 
+        altitude = self.__vehicle_cfg.altitude
         altitude_min = altitude if type(altitude) == float else altitude[0]
         return altitude_min
     
     @property
     def altitude_max(self):
-        return self.__vehicle_cfg['altitude'][1] 
+        altitude_max = self.__vehicle_cfg.altitude[1]
+        return altitude_max
     
     @property
     def rgb(self):
-        vehicle_name = self.__vehicle_cfg['name']
-        camera_name = self.__vehicle_cfg['camera']['name']
+        vehicle_name, camera_name = self.vehicle_and_camera_name
         return {'rgb' : self.rgb_image(vehicle_name, camera_name), 'tf' : self.tf(vehicle_name, camera_name)}
     
     @property
     def depth(self):
-        vehicle_name = self.__vehicle_cfg['name']
-        camera_name = self.__vehicle_cfg['camera']['name']
+        vehicle_name, camera_name = self.vehicle_and_camera_name
         return {'depth' : self.depth_image(vehicle_name, camera_name), 
                 'tf' : self.tf(vehicle_name, camera_name)}
     
     @property
     def segmentation(self):
-        vehicle_name = self.__vehicle_cfg['name']
-        camera_name = self.__vehicle_cfg['camera']['name']
+        vehicle_name, camera_name = self.vehicle_and_camera_name
         return {'segmentation' : self.segmentation_image(vehicle_name, camera_name), 
                 'tf' : self.tf(vehicle_name, camera_name)}
     
     @property
     def stereo(self):
-        vehicle_name = self.__vehicle_cfg['name']
-        camera_name = self.__vehicle_cfg['camera']['name']
+        vehicle_name, camera_name = self.vehicle_and_camera_name
         return {'rgb' : self.rgb_image(vehicle_name, camera_name), 
                 'depth' : self.depth_image(vehicle_name, camera_name), 
                 'tf' : self.tf(vehicle_name, camera_name)}
     
     @property
     def panoptic(self):
-        vehicle_name = self.__vehicle_cfg['name']
-        camera_name = self.__vehicle_cfg['camera']['name']
+        vehicle_name, camera_name = self.vehicle_and_camera_name
         return {'rgb' : self.rgb_image(vehicle_name, camera_name), 
                 'depth' : self.depth_image(vehicle_name, camera_name), 
                 'segmentation' : self.segmentation_image(vehicle_name, camera_name), 
@@ -328,19 +327,16 @@ class DualActPose(RotorPyROS):
     
     @property
     def stereo_occupancy(self):
-        vehicle_name = self.__vehicle_cfg['name']
-        camera_name = self.__vehicle_cfg['camera']['name']
+        vehicle_name, camera_name = self.vehicle_and_camera_name
         rgb = self.rgb_image(vehicle_name, camera_name)
         depth = self.depth_image(vehicle_name, camera_name)
         pcd = self.point_cloud(rgb[...,::-1].copy(), depth.astype(np.float32))
         
         return {'rgb' : rgb, 'depth' : depth, 'point_cloud' : pcd, 'tf' : self.tf(vehicle_name, camera_name)}
     
-    
     @property
     def panoptic_occupancy(self):
-        vehicle_name = self.__vehicle_cfg['name']
-        camera_name = self.__vehicle_cfg['camera']['name']
+        vehicle_name, camera_name = self.vehicle_and_camera_name
         rgb = self.rgb_image(vehicle_name, camera_name)
         depth = self.depth_image(vehicle_name, camera_name)
         pcd = self.point_cloud(rgb[...,::-1].copy(), depth.astype(np.float32))
@@ -357,37 +353,52 @@ class DualActPose(RotorPyROS):
     
     
     def _start(self):
-        self.start(self.__vehicle_cfg['name'])
-        self.start(self.__shadow_cfg['name'])
+        vehicle_name = self.__vehicle_cfg.name
+        twin_name = self.__twin_cfg.camera.name
+        twin_camera_name = self.__twin_cfg.camera.name
+
+        self.start(vehicle_name)
+        self.start(twin_name)
         
-        self.simSetDetectionFilterRadius(self.__shadow_cfg['camera']['name'], 
-                                                 ImageType.Scene, 200 * 100, 
-                                                 vehicle_name=self.__shadow_cfg['name'])
+        self.simSetDetectionFilterRadius(twin_camera_name, 
+                                        ImageType.Scene, 200 * 100, 
+                                        vehicle_name=twin_name)
         
     def _gimbal(self, pitch : float, deg2rad : bool = True):
         self.gimbal = [0, np.deg2rad(pitch), 0] if deg2rad else [0, pitch, 0]
+
         pose = Pose(Vector3r(0.3,0,0.3), self.gimbal)
-        self.simSetCameraPose(self.__vehicle_cfg['camera']['name'], pose, self.__vehicle_cfg['name'])
-        self.simSetCameraPose(self.__shadow_cfg['camera']['name'], pose, self.__shadow_cfg['name'])
+        vehicle_name = self.__vehicle_cfg.name
+        vehicle_camera_name = self.__vehicle_cfg.camera.name
+        twin_name = self.__twin_cfg.name
+        twin_camera_name = self.__twin_cfg.camera.name
+
+        self.simSetCameraPose(vehicle_camera_name, pose, vehicle_name)
+        self.simSetCameraPose(twin_name, pose, twin_camera_name)
         
         return True
         
     def _pose(self, new_pose : list):
         pose = self.pose_from_positon_euler_list(new_pose)
+        twin_name = self.__twin_cfg.name
         self.__dual_pose.position += pose.position
         self.__dual_pose.orientation *= pose.orientation
+        pose = self.__dual_pose
         
-        self.simSetVehiclePose(self.__dual_pose, True)
-        self.simSetVehiclePose(self.__dual_pose, True, vehicle_name=self.__shadow_cfg['name'])
+        self.simSetVehiclePose(pose, True)
+        self.simSetVehiclePose(pose, True, vehicle_name=twin_name)
         
         return True
     
     def go_home(self):
         _, rpitch, _ = to_eularian_angles(self.gimbal)
+        home = self.__home
+        twin_name = self.__twin_cfg.name
+
         self._gimbal(-rpitch)
-        self.simSetVehiclePose(self.__home, True)
-        self.simSetVehiclePose(self.__home, True, vehicle_name=self.__shadow_cfg['name'])
-        self.__dual_pose = copy.deepcopy(self.__home)
+        self.simSetVehiclePose(home, True)
+        self.simSetVehiclePose(home, True, vehicle_name=twin_name)
+        self.__dual_pose = copy.deepcopy(home)
         return True
         
     def next_point_of_view(self, five_DoF : NDArray):
@@ -399,12 +410,14 @@ class DualActPose(RotorPyROS):
         return True
     
     def set_detection(self, detect : str):
-        self.simAddDetectionFilterMeshName(self.__shadow_cfg['camera']['name'], 
-                                              ImageType.Scene, f"{detect}*", 
-                                              vehicle_name=self.__shadow_cfg['name'])
+        twin_name = self.__twin_cfg.camera.name
+        twin_camera_name = self.__twin_cfg.camera.name
+        self.simAddDetectionFilterMeshName(twin_camera_name, 
+                                            ImageType.Scene, f"{detect}*", 
+                                            vehicle_name=twin_name)
         
     def detection_distance(self):
-        wx, wy, wz, _, _, _ = self.__shadow_cfg['global_pose']
+        wx, wy, wz, _, _, _ = self.__twin_cfg['global_pose']
         position, _ = self.__dual_pose
         rx, ry, rz = position
         x, y, z = wx + rx, wy + ry, wz + rz
@@ -412,11 +425,14 @@ class DualActPose(RotorPyROS):
         return np.sqrt(x**2 + y**2 + z**2)
         
     def detections(self):
-        return self.simGetDetectedMeshesDistances(self.__shadow_cfg['camera']['name'], 
-                                                                           ImageType.Scene,
-                                                                           vehicle_name=self.__shadow_cfg['name'])
+        twin_name = self.__twin_cfg.camera.name
+        twin_camera_name = self.__twin_cfg.camera.name
+        return self.simGetDetectedMeshesDistances(twin_camera_name, 
+                                                    ImageType.Scene,
+                                                    vehicle_name=twin_name)
         
-    def random_pose(self, range_x : dict, range_y : dict, safe_range_x : dict, safe_range_y : dict, target : str):
+    def _random_pose(self, range_x : dict, range_y : dict, safe_range_x : 
+                    dict, safe_range_y : dict, target : str):
         xmin, xmax = range_x
         ymin, ymax = range_y
         
@@ -429,43 +445,52 @@ class DualActPose(RotorPyROS):
         centroide_pose = self.get_object_pose_as_list(target)
         yaw = theta([px, py], centroide_pose[:2])
         pose = [px, py, self.__home.position.z_val, 0, 0, yaw]
-
-        self._pose(pose)
         
         return pose
-
-    @singledispatchmethod    
-    def random_base_pose(self, range_x : dict, range_y : dict, safe_range_x : dict, safe_range_y : dict, target : str):
-        pov_pose = self.random_pose(range_x, range_y, safe_range_x, safe_range_y, target)  
-        position = pov_pose[:3]
-        orientation = pov_pose[3:]      
-        
-        position[1] -= 13
-        position[2] = self.__vehicle_cfg['base']['altitude']
-        orientation[2:] = [np.deg2rad(-90), 0]
-        pose = position + orientation
-        self.set_object_pose(pose, self.__vehicle_cfg['base']['name'])
-        
-        np_position = np.array(self.__shadow_cfg['global_pose'][:3]) + np.array(position)
-        pose = np_position.tolist() + orientation
-        self.set_object_pose(pose, self.__shadow_cfg['base']['name'])
-        
-        return pov_pose
     
-    @random_base_pose.register
-    def random_base_pose(self, pov_pose : list):
-        position = pov_pose[:3]
-        orientation = pov_pose[3:]      
+    @singledispatchmethod 
+    def random_pose(self, range_x : dict, range_y : dict, safe_range_x : 
+                    dict, safe_range_y : dict, target : str, spawn_heliport : bool):
         
-        position[1] -= 13
-        position[2] = self.__vehicle_cfg['base']['altitude']
-        orientation = [0, np.deg2rad(-90), 0]
-        
-        pose = position + orientation
-        self.set_object_pose(pose, self.__vehicle_cfg['base']['name'])
-        
-        np_position = np.array(self.__shadow_cfg['global_pose'][:3]) + np.array(position)
-        pose = np_position.tolist() + orientation
-        self.set_object_pose(pose, self.__shadow_cfg['base']['name'])
-        
+        pov_pose = self._random_pose(range_x, range_y, safe_range_x, safe_range_y, target)  
+        self._pose(pov_pose)
+
+        if spawn_heliport:
+            position = pov_pose[:3]
+            orientation = pov_pose[3:]
+
+            position[1] -= 13
+            position[2] = self.__vehicle_cfg.base.altitude
+            orientation[2:] = [np.deg2rad(-90), 0]
+            pose = position + orientation
+            self.set_object_pose(pose, self.__vehicle_cfg.base.name)
+            
+            np_position = np.array(self.__twin_cfg.global_pose[:3]) + np.array(position)
+            pose = np_position.tolist() + orientation
+            self.set_object_pose(pose, self.__twin_cfg.base.name)
+
         return pov_pose
+            
+
+    @random_pose.register
+    def random_pose(self, pov_pose : str, spawn_heliport : bool):  
+        self._pose(pov_pose)
+
+        if spawn_heliport:
+            position = pov_pose[:3]
+            orientation = pov_pose[3:]
+
+            position[1] -= 13
+            position[2] = self.__vehicle_cfg.base.altitude
+            orientation[2:] = [np.deg2rad(-90), 0]
+            pose = position + orientation
+            self.set_object_pose(pose, self.__vehicle_cfg.base.name)
+            
+            np_position = np.array(self.__twin_cfg.global_pose[:3]) + np.array(position)
+            pose = np_position.tolist() + orientation
+            self.set_object_pose(pose, self.__twin_cfg.base.name)
+
+        return pov_pose
+
+
+        
