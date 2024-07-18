@@ -1,7 +1,7 @@
-import rospy
 import copy
 import cv2
 import message_filters
+import rospy
 import os
 
 import numpy as np
@@ -10,12 +10,6 @@ import open3d as o3d
 from functools import singledispatchmethod
 from numpy.typing import NDArray
 from typing import List
-
-from airsim_base.client import MultirotorClient
-from airsim_base.types import Vector3r, Quaternionr, Pose, ImageType
-from airsim_base.utils import to_quaternion, to_eularian_angles, random_choice, theta
-
-from .utils import dict_object
 
 from sensor_msgs.msg import Image
 from cv_bridge import CvBridge, CvBridgeError
@@ -26,6 +20,28 @@ from airsim_ros_pkgs.srv import Takeoff, Land
 
 from cv_bridge import CvBridge, CvBridgeError
 
+from airsim_base.client import MultirotorClient
+from airsim_base.types import Vector3r, Quaternionr, Pose, ImageType
+from airsim_base.utils import to_quaternion, to_eularian_angles, random_choice, theta
+
+
+class DictToClass:
+    def __init__(self, dictionary):
+        self.update(dictionary)
+    
+    def __repr__(self):
+        return str(self.__dict__)
+    
+    def update(self, dictionary : dict):
+        for key, value in dictionary.items():
+            if isinstance(value, dict):
+                # Se o valor for um dicionário, criar um atributo de classe recursivamente
+                setattr(self, key, DictToClass(value))
+            else:
+                # Se o valor não for um dicionário, criar um atributo diretamente
+                setattr(self, key, value)
+
+        return self
 
 class RotorPyROS(MultirotorClient):       
          
@@ -230,6 +246,7 @@ class RotorPyROS(MultirotorClient):
         self.__gimbal_pub.publish(gimbal_msg)
     
     def set_object_pose(self, pose : list, object_name : str = ''):
+        print(f"---- pose of object: {pose}")
         x, y, z, roll, pitch, yaw = pose
         start_pose = Pose(Vector3r(x, y, z), to_quaternion(pitch, roll, yaw))
         self.simSetObjectPose(object_name, start_pose)
@@ -249,7 +266,7 @@ class RotorPyROS(MultirotorClient):
         
 
 class PointOfViewTwins(RotorPyROS):
-    def __init__(self, ip: str, vehicle_cfg : dict_object, twin_cfg : dict_object, observation_type : str):        
+    def __init__(self, ip: str, vehicle_cfg : DictToClass, twin_cfg : DictToClass, observation_type : str):        
         super().__init__(ip, vehicle_cfg.camera.dim, vehicle_cfg.camera.fov)
         
         self.__vehicle_cfg = vehicle_cfg
@@ -354,9 +371,8 @@ class PointOfViewTwins(RotorPyROS):
     
     def _start(self):
         vehicle_name = self.__vehicle_cfg.name
-        twin_name = self.__twin_cfg.camera.name
+        twin_name = self.__twin_cfg.name
         twin_camera_name = self.__twin_cfg.camera.name
-
         self.start(vehicle_name)
         self.start(twin_name)
         
@@ -381,9 +397,9 @@ class PointOfViewTwins(RotorPyROS):
     def _pose(self, new_pose : list):
         pose = self.pose_from_positon_euler_list(new_pose)
         twin_name = self.__twin_cfg.name
-        self.__dual_pose.position += pose.position
-        self.__dual_pose.orientation *= pose.orientation
-        pose = self.__dual_pose
+        self.__twin_pose.position += pose.position
+        self.__twin_pose.orientation *= pose.orientation
+        pose = self.__twin_pose
         
         self.simSetVehiclePose(pose, True)
         self.simSetVehiclePose(pose, True, vehicle_name=twin_name)
@@ -398,7 +414,7 @@ class PointOfViewTwins(RotorPyROS):
         self._gimbal(-rpitch)
         self.simSetVehiclePose(home, True)
         self.simSetVehiclePose(home, True, vehicle_name=twin_name)
-        self.__dual_pose = copy.deepcopy(home)
+        self.__twin_pose = copy.deepcopy(home)
         return True
         
     def next_point_of_view(self, five_DoF : NDArray):
@@ -410,7 +426,7 @@ class PointOfViewTwins(RotorPyROS):
         return True
     
     def set_detection(self, detect : str):
-        twin_name = self.__twin_cfg.camera.name
+        twin_name = self.__twin_cfg.name
         twin_camera_name = self.__twin_cfg.camera.name
         self.simAddDetectionFilterMeshName(twin_camera_name, 
                                             ImageType.Scene, f"{detect}*", 
@@ -418,14 +434,14 @@ class PointOfViewTwins(RotorPyROS):
         
     def detection_distance(self):
         wx, wy, wz, _, _, _ = self.__twin_cfg['global_pose']
-        position, _ = self.__dual_pose
+        position, _ = self.__twin_pose
         rx, ry, rz = position
         x, y, z = wx + rx, wy + ry, wz + rz
         
         return np.sqrt(x**2 + y**2 + z**2)
         
     def detections(self):
-        twin_name = self.__twin_cfg.camera.name
+        twin_name = self.__twin_cfg.name
         twin_camera_name = self.__twin_cfg.camera.name
         return self.simGetDetectedMeshesDistances(twin_camera_name, 
                                                     ImageType.Scene,
@@ -455,14 +471,15 @@ class PointOfViewTwins(RotorPyROS):
         pov_pose = self._random_pose(range_x, range_y, safe_range_x, safe_range_y, target)  
         self._pose(pov_pose)
 
+        print(self.__vehicle_cfg.base, self.__twin_cfg.base)
+
         if spawn_heliport:
             position = pov_pose[:3]
-            orientation = pov_pose[3:]
-
             position[1] -= 13
             position[2] = self.__vehicle_cfg.base.altitude
-            orientation[2:] = [np.deg2rad(-90), 0]
+            orientation = [0, np.deg2rad(-90), 0]
             pose = position + orientation
+            print(f"aqui----------------{position} {orientation}")
             self.set_object_pose(pose, self.__vehicle_cfg.base.name)
             
             np_position = np.array(self.__twin_cfg.global_pose[:3]) + np.array(position)
@@ -473,7 +490,7 @@ class PointOfViewTwins(RotorPyROS):
             
 
     @random_pose.register
-    def random_pose(self, pov_pose : str, spawn_heliport : bool):  
+    def _(self, pov_pose : str, spawn_heliport : bool):  
         self._pose(pov_pose)
 
         if spawn_heliport:
