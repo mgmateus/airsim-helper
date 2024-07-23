@@ -32,6 +32,9 @@ class DictToClass:
     def __repr__(self):
         return str(self.__dict__)
     
+    def __getitem__(self, index):
+        return self.__dict__[index]
+    
     def update(self, dictionary : dict):
         for key, value in dictionary.items():
             if isinstance(value, dict):
@@ -42,6 +45,8 @@ class DictToClass:
                 setattr(self, key, value)
 
         return self
+    
+
 
 class RotorPyROS(MultirotorClient):       
          
