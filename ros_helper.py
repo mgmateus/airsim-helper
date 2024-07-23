@@ -161,11 +161,12 @@ class RotorPyROS(MultirotorClient):
         cv_image = None
         while image_data is None :
             try:
+                
                 image_data = rospy.wait_for_message("/airsim_node/"+vehicle_name+"/"+camera_name+"/Scene", Image, timeout=5)
                 cv_image = self.image_transport(image_data)  
             except:
                 pass
-
+        
         return cv_image
     
             
@@ -389,8 +390,8 @@ class PointOfViewTwins(RotorPyROS):
         twin_name = self.__twin_cfg.name
         twin_camera_name = self.__twin_cfg.camera.name
 
-        self.simSetCameraPose(vehicle_camera_name, pose, vehicle_name)
-        self.simSetCameraPose(twin_name, pose, twin_camera_name)
+        self.simSetCameraPose( vehicle_camera_name, pose, vehicle_name)
+        self.simSetCameraPose(twin_camera_name, pose, twin_name)
         
         return True
         
