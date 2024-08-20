@@ -252,7 +252,7 @@ class RotorPyROS(MultirotorClient):
         self.__gimbal_pub.publish(gimbal_msg)
     
     def set_object_pose(self, pose : list, object_name : str = ''):
-        print(f"---- pose of object: {pose}")
+        # print(f"---- pose of object: {pose}")
         x, y, z, roll, pitch, yaw = pose
         start_pose = Pose(Vector3r(x, y, z), to_quaternion(pitch, roll, yaw))
         self.simSetObjectPose(object_name, start_pose)
@@ -477,7 +477,7 @@ class PointOfViewTwins(RotorPyROS):
         pov_pose = self._random_pose(range_x, range_y, safe_range_x, safe_range_y, target)  
         self._pose(pov_pose)
 
-        print(self.__vehicle_cfg.base, self.__twin_cfg.base)
+        # print(self.__vehicle_cfg.base, self.__twin_cfg.base)
 
         if spawn_heliport:
             position = pov_pose[:3]
@@ -485,7 +485,7 @@ class PointOfViewTwins(RotorPyROS):
             position[2] = self.__vehicle_cfg.base.altitude
             orientation = [0, np.deg2rad(-90), 0]
             pose = position + orientation
-            print(f"aqui----------------{position} {orientation}")
+            # print(f"aqui----------------{position} {orientation}")
             self.set_object_pose(pose, self.__vehicle_cfg.base.name)
             
             np_position = np.array(self.__twin_cfg.global_pose[:3]) + np.array(position)
