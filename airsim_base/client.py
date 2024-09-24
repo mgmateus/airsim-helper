@@ -706,11 +706,11 @@ class VehicleClient:
         responses_raw = self.client.call('simGetDetections', camera_name, image_type, vehicle_name, external)
         # vehicle_pose = Pose.from_msgpack(self.client.call('simGetVehiclePose', vehicle_name))
         camera_info = CameraInfo.from_msgpack(self.client.call('simGetCameraInfo', str(camera_name), vehicle_name, external))
-
+        pre_process = lambda response: response.split('_')[0] if response.count("_") else response
         meshes = []
         distances = []
         for response_raw in responses_raw:
-            mesh_name = DetectionInfo.from_msgpack(response_raw).name
+            mesh_name = pre_process(DetectionInfo.from_msgpack(response_raw).name)
             obj_pose = Pose.from_msgpack(self.client.call('simGetObjectPose', mesh_name))
             distance = camera_info.pose.position.distance_to(obj_pose.position)
             meshes.append(mesh_name)
