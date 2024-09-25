@@ -1,4 +1,70 @@
 import json
+import numpy
+
+
+def rotation_matrix_from_angles(pry):
+    pitch = pry[0]
+    roll = pry[1]
+    yaw = pry[2]
+    sy = numpy.sin(yaw)
+    cy = numpy.cos(yaw)
+    sp = numpy.sin(pitch)
+    cp = numpy.cos(pitch)
+    sr = numpy.sin(roll)
+    cr = numpy.cos(roll)
+    
+    Rx = numpy.array([
+        [1, 0, 0],
+        [0, cr, -sr],
+        [0, sr, cr]
+    ])
+    
+    Ry = numpy.array([
+        [cp, 0, sp],
+        [0, 1, 0],
+        [-sp, 0, cp]
+    ])
+    
+    Rz = numpy.array([
+        [cy, -sy, 0],
+        [sy, cy, 0],
+        [0, 0, 1]
+    ])
+    
+    #Roll is applied first, then pitch, then yaw.
+    RyRx = numpy.matmul(Ry, Rx)
+    return numpy.matmul(Rz, RyRx)
+
+def project_3d_point_to_screen(subjectXYZ, camXYZ, camQuaternion, camProjMatrix4x4, imageWidthHeight):
+    #Turn the camera position into a column vector.
+    camPosition = numpy.transpose([camXYZ])
+
+    #Convert the camera's quaternion rotation to yaw, pitch, roll angles.
+    pitchRollYaw = utils.to_eularian_angles(camQuaternion)
+    
+    #Create a rotation matrix from camera pitch, roll, and yaw angles.
+    camRotation = rotation_matrix_from_angles(pitchRollYaw)
+    
+    #Change coordinates to get subjectXYZ in the camera's local coordinate system.
+    XYZW = numpy.transpose([subjectXYZ])
+    XYZW = numpy.add(XYZW, -camPosition)
+    print("XYZW: " + str(XYZW))
+    XYZW = numpy.matmul(numpy.transpose(camRotation), XYZW)
+    print("XYZW derot: " + str(XYZW))
+    
+    #Recreate the perspective projection of the camera.
+    XYZW = numpy.concatenate([XYZW, [[1]]])    
+    XYZW = numpy.matmul(camProjMatrix4x4, XYZW)
+    XYZW = XYZW / XYZW[3]
+    
+    #Move origin to the upper-left corner of the screen and multiply by size to get pixel values. Note that screen is in y,-z plane.
+    normX = (1 - XYZW[0]) / 2
+    normY = (1 + XYZW[1]) / 2
+    
+    return numpy.array([
+        imageWidthHeight[0] * normX,
+        imageWidthHeight[1] * normY
+    ]).reshape(2,)
 
 class DictToClass:
     def __init__(self, dictionary : dict = dict()):

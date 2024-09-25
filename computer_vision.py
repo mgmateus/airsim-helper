@@ -221,3 +221,9 @@ class ComputerVision(VehicleClient):
     def start(self, vehicle_name : str = ''):
         self.enableApiControl(True, vehicle_name)
         self.armDisarm(True, vehicle_name)
+
+
+
+if __name__ == "__main__":
+    cv = ComputerVision('172.19.0.2')
+    print(cv.listVehicles())
