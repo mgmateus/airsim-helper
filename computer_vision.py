@@ -1,6 +1,7 @@
 import copy
 
 from typing import Tuple, List, Dict
+from numpy.typing import NDArray
 
 import numpy as np
 
@@ -14,19 +15,19 @@ from utils import DictToClass
 class ComputerVision(VehicleClient):
 
     @staticmethod
-    def pose_from_positon_euler_list(pose : list) -> Tuple[Pose, Quaternionr]:
+    def pose_from_positon_euler_list(pose : list) -> Pose:
         x, y, z, roll, pitch, yaw= pose
         return Pose(Vector3r(x, y, z,), 
                to_quaternion(pitch=pitch, roll=roll, yaw=yaw)) 
     
     @staticmethod
-    def pose_to_position_quat(pose : Pose) -> Tuple[list, list]:
+    def pose_to_position_quat(pose : Pose) -> Tuple[NDArray, NDArray]:
         position = pose.position.to_numpy_array()
         orientation = pose.orientation.to_numpy_array()
         return position, orientation
     
     @staticmethod
-    def pose_to_ndarray(pose : Pose) -> Tuple[list, list]:
+    def pose_to_ndarray(pose : Pose) -> Tuple[NDArray, NDArray]:
         position = pose.position.to_numpy_array()
         orientation = pose.orientation.to_numpy_array()
         return np.hstack((position, orientation))
@@ -153,17 +154,17 @@ class ComputerVision(VehicleClient):
 
         return call
 
-    def _depth2pcd(self, raw_depth : np.ndarray) -> np.ndarray:
+    def _depth2pcd(self, raw_depth : NDArray) -> NDArray:
         """
         Maps a 2D depth image to a 3D point cloud.
 
         Args
         ----------
-        raw_depth (np.ndarray): A 2D numpy array representing the depth image.
+        raw_depth (NDArray): A 2D numpy array representing the depth image.
 
         Returns
         ----------
-        np.ndarray: A 2D numpy array representing the point cloud.
+        NDArray: A 2D numpy array representing the point cloud.
         """
         
         raw_depth = copy.deepcopy(raw_depth) * 100
@@ -231,7 +232,7 @@ if __name__ == "__main__":
     cv = ComputerVision('172.19.0.2')
 
     v= cv.listVehicles()[0]
-    cv.simSetCameraPose(camera_name='0', pose=cv.pose_from_positon_euler_list[0.9, 0, 0.3, 0, 0, 0], vehicle_name=v)
+    cv.simSetCameraPose(camera_name='0', pose=cv.pose_from_positon_euler_list([0.9, 0, 0.3, 0, 0, 0]), vehicle_name=v)
 
     monocular = cv.simGetCameraInfo('0', v)
     print(monocular)
