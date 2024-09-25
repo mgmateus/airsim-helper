@@ -233,16 +233,17 @@ if __name__ == "__main__":
     import time
     vp, cp = cv.simGetVehiclePose(), cv.simGetCameraInfo('0').pose
     print(f"Vehicle position : {vp.position.to_numpy_array()} -- Camera position : {cp.position.to_numpy_array()}")
-    time.sleep(3)
+    time.sleep(2)
 
     relative_cp = cv.pose_from_positon_euler_list([0.3, 0, 0.3, 0, 0, 0])
 
     cv.simSetCameraPose('0',relative_cp)
     vp, cp = cv.simGetVehiclePose(), cv.simGetCameraInfo('0').pose
     print(f"Vehicle position : {vp.position.to_numpy_array()} -- Camera position : {cp.position.to_numpy_array()}")
-    time.sleep(3)
+    time.sleep(2)
 
     cv.simSetVehiclePose(cv.pose_from_positon_euler_list([0, 0, -50, 0, 0, 0]), True)
+    time.sleep(2)
     cv.simSetCameraPose('0',relative_cp)
     vp, cp = cv.simGetVehiclePose(), cv.simGetCameraInfo('0').pose
     print(f"Vehicle position : {vp.position.to_numpy_array()} -- Camera position : {cp.position.to_numpy_array()}")
