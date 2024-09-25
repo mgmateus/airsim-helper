@@ -1,4 +1,7 @@
 import copy
+
+from typing import Tuple
+
 import numpy as np
 
 from airsim_base import (Vector3r, Quaternionr, Pose, ImageRequest, \
@@ -11,19 +14,19 @@ from utils import DictToClass
 class ComputerVision(VehicleClient):
 
     @staticmethod
-    def pose_from_positon_euler_list(pose : list) -> tuple[Pose, Quaternionr]:
+    def pose_from_positon_euler_list(pose : list) -> Tuple[Pose, Quaternionr]:
         x, y, z, roll, pitch, yaw= pose
         return Pose(Vector3r(x, y, z,), 
                to_quaternion(pitch=pitch, roll=roll, yaw=yaw)) 
     
     @staticmethod
-    def pose_to_position_quat(pose : Pose) -> tuple[list, list]:
+    def pose_to_position_quat(pose : Pose) -> Tuple[list, list]:
         position = pose.position.to_numpy_array()
         orientation = pose.orientation.to_numpy_array()
         return position, orientation
     
     @staticmethod
-    def pose_to_ndarray(pose : Pose) -> tuple[list, list]:
+    def pose_to_ndarray(pose : Pose) -> Tuple[list, list]:
         position = pose.position.to_numpy_array()
         orientation = pose.orientation.to_numpy_array()
         return np.hstack((position, orientation))
