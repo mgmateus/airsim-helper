@@ -241,8 +241,10 @@ if __name__ == "__main__":
     imgs = cv.simGetImages([ImageRequest("0", ImageType.Scene, False, False),
                             ImageRequest("0", ImageType.DepthPlanar, True)])
     for img in imgs:
-        print(img.image_data_uint8, img.image_data_float)
-
+        if img.image_data_uint8:
+            print('RGB')
+        if img.image_data_float:
+            print('Depth')
     cv.simSetVehiclePose(cv.pose_from_positon_euler_list([0, 0, -50, 0, 0, 0]), True)
     time.sleep(2)
     cv.simSetCameraPose('0',relative_cp)
