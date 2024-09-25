@@ -33,7 +33,7 @@ def random_choice(min_range, max_range):
     c, d = max_range
     return random.uniform(a, b) if random.choice([True, False]) else random.uniform(c, d)
 
-def string_to_uint8_array(bstr):
+def string_to_uint8_array(bstr) -> np.ndarray:
     return np.fromstring(bstr, np.uint8)
     
 def string_to_float_array(bstr):
