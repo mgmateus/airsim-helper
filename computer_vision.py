@@ -234,22 +234,16 @@ if __name__ == "__main__":
     vp, cp = cv.simGetVehiclePose(), cv.simGetCameraInfo('0').pose
     print(f"Vehicle position : {vp.position.to_numpy_array()} -- Camera position : {cp.position.to_numpy_array()}")
     time.sleep(3)
-    relative_cp = cv.pose_from_positon_euler_list([0.45, 0, 0.3, 0, 0, 0])
+
+    relative_cp = cv.pose_from_positon_euler_list([0.3, 0, 0.3, 0, 0, 0])
+
     cv.simSetCameraPose('0',relative_cp)
     vp, cp = cv.simGetVehiclePose(), cv.simGetCameraInfo('0').pose
     print(f"Vehicle position : {vp.position.to_numpy_array()} -- Camera position : {cp.position.to_numpy_array()}")
+    time.sleep(3)
 
-
-
-    
-    # cv.simSetCameraPose(camera_name='0', pose=cv.pose_from_positon_euler_list([0., 0, 0.3, 0, 0, 0]), vehicle_name=v)
-    # monocular = cv.simGetCameraInfo('0', v).pose
-    # print(monocular)
-
-    # cv.simSetCameraPose(camera_name='0', pose=cv.pose_from_positon_euler_list([0, 0, -100, 0, 0, 0]), vehicle_name=v)
-    # monocular = cv.simGetCameraInfo('0', v).pose
-    # print(monocular)
-
-    # cv.simSetVehiclePose(pose=cv.pose_from_positon_euler_list([0, 0, -100, 0, 0, 0]), ignore_collision=True, vehicle_name=v)
-    # monocular = cv.simGetCameraInfo('0', v).pose
-    # print(monocular)
+    cv.simSetVehiclePose(cv.pose_from_positon_euler_list([0, 0, -50, 0, 0, 0]))
+    cv.simSetCameraPose('0',relative_cp)
+    vp, cp = cv.simGetVehiclePose(), cv.simGetCameraInfo('0').pose
+    print(f"Vehicle position : {vp.position.to_numpy_array()} -- Camera position : {cp.position.to_numpy_array()}")
+    time.sleep(3)
