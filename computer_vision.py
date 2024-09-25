@@ -240,7 +240,8 @@ if __name__ == "__main__":
     cv.simSetCameraPose('0',relative_cp)
     vp, cp = cv.simGetVehiclePose(), cv.simGetCameraInfo('0').pose
     print(f"Vehicle position : {vp.position.to_numpy_array()} -- Camera position : {cp.position.to_numpy_array()}")
-    time.sleep(2)
+    img = cv.simGetImage('0', ImageType.DepthPlanar)
+    print(True if img else False)
 
     cv.simSetVehiclePose(cv.pose_from_positon_euler_list([0, 0, -50, 0, 0, 0]), True)
     time.sleep(2)
