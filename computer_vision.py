@@ -235,7 +235,7 @@ if __name__ == "__main__":
     print(f"Vehicle position : {vp.position.to_numpy_array()} -- Camera position : {cp.position.to_numpy_array()}")
     
     relative_cp = cv.pose_from_positon_euler_list([0.45, 0, 0.3, 0, 0, 0])
-    cv.simSetCameraPose(relative_cp)
+    cv.simSetCameraPose('0',relative_cp)
     print(f"Vehicle position : {vp.position.to_numpy_array()} -- Camera position : {cp.position.to_numpy_array()}")
 
 
