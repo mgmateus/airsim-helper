@@ -234,7 +234,7 @@ if __name__ == "__main__":
     v= cv.listVehicles()[0]
     monocular = cv.simGetCameraInfo('0', v)
     print(monocular)
-    
-    cv.simSetCameraPose(camera_name='0', pose=cv.pose_from_positon_euler_list([0.9, 0, 0.3, 0, 0, 0]), vehicle_name=v)
+    cv.simSetVehiclePose(pose=cv.pose_from_positon_euler_list([0.9, 0, 0.3, 0, 0, 0]), vehicle_name=v)
+    # cv.simSetCameraPose(camera_name='0', pose=cv.pose_from_positon_euler_list([0.9, 0, 0.3, 0, 0, 0]), vehicle_name=v)
     monocular = cv.simGetCameraInfo('0', v)
     print(monocular)
