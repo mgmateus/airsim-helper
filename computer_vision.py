@@ -1,6 +1,6 @@
 import copy
 
-from typing import Tuple, List
+from typing import Tuple, List, Dict
 
 import numpy as np
 
@@ -89,7 +89,7 @@ class ComputerVision(VehicleClient):
             q = data
         self.__gimbal *= q
 
-    def _call(self, requests : dict[str, List[ImageRequest]], vehicle_name : str = "") \
+    def _call(self, requests : Dict[str, List[ImageRequest]], vehicle_name : str = "") \
                                                                 -> List[ImageResponse]:
         """
         Retrieves image with non-zero responses from the simulator.
