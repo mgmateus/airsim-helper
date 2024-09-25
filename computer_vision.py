@@ -230,7 +230,7 @@ class ComputerVision(VehicleClient):
 if __name__ == "__main__":
     cv = ComputerVision('172.19.0.2')
 
-    v= cv.listVehicles()
+    v= cv.listVehicles()[0]
     monocular = cv.simGetCameraInfo('monocular', v)
     stereo = cv.simGetCameraInfo('stereo', v)
     panoptic = cv.simGetCameraInfo('panoptic', v)
