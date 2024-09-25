@@ -229,4 +229,8 @@ class ComputerVision(VehicleClient):
 
 if __name__ == "__main__":
     cv = ComputerVision('172.19.0.2')
+
     print(cv.listVehicles())
+    for v in cv.listVehicles():
+        for i in range(6):
+            print(cv.simGetCameraInfo(camera_name=str(i),  vehicle_name=v))
