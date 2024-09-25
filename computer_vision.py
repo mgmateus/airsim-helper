@@ -234,14 +234,14 @@ if __name__ == "__main__":
     vp, cp = cv.simGetVehiclePose(), cv.simGetCameraInfo('0').pose
     print(f"Vehicle position : {vp.position.to_numpy_array()} -- Camera position : {cp.position.to_numpy_array()}")
     img = cv.simGetImage('0', ImageType.Scene)
-    print(True if img else False)
+    print(img.image_data_uint8, img.image_data_float)
     relative_cp = cv.pose_from_positon_euler_list([0.3, 0, 0.3, 0, 0, 0])
 
     cv.simSetCameraPose('0',relative_cp)
     vp, cp = cv.simGetVehiclePose(), cv.simGetCameraInfo('0').pose
     print(f"Vehicle position : {vp.position.to_numpy_array()} -- Camera position : {cp.position.to_numpy_array()}")
     img = cv.simGetImage('0', ImageType.DepthPlanar)
-    print(True if img else False)
+    print(img.image_data_uint8, img.image_data_float)
 
     cv.simSetVehiclePose(cv.pose_from_positon_euler_list([0, 0, -50, 0, 0, 0]), True)
     time.sleep(2)
