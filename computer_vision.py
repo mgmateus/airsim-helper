@@ -6,7 +6,7 @@ from airsim_base import (Vector3r, Quaternionr, Pose, ImageRequest, \
 from airsim_base import to_quaternion, to_eularian_angles, string_to_uint8_array
 from airsim_base import VehicleClient
 
-from .utils import DictToClass
+from utils import DictToClass
 
 class ComputerVision(VehicleClient):
 
